@@ -20,7 +20,5 @@ void tray_remove(void);
 void tray_set(TrayState state, const WCHAR *tip);
 void tray_shutdown(void);
 
-/* Explorer restarting takes every tray icon with it. */
-UINT tray_restart_message(void);
 
 #endif

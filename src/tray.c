@@ -4,7 +4,6 @@
 
 static HWND  g_owner;
 static UINT  g_msg;
-static UINT  g_restart;
 static HICON g_icon;
 static int   g_added;
 static TrayState g_state = TRAY_OFF;
@@ -119,14 +118,8 @@ void tray_init(HWND owner, UINT callback_msg)
 {
     g_owner = owner;
     g_msg = callback_msg;
-    g_restart = RegisterWindowMessageW(L"TaskbarCreated");
     g_icon = make_dot(state_colour(TRAY_OFF));
     g_added = 0;
-}
-
-UINT tray_restart_message(void)
-{
-    return g_restart;
 }
 
 void tray_add(void)

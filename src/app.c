@@ -629,7 +629,9 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 
     switch (msg) {
     case WM_CREATE:
-        taskbar_created = tray_restart_message();
+        /* Registered here rather than read back from tray.c: WM_CREATE
+           arrives from inside CreateWindowExW, before tray_init has run. */
+        taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
         return 0;
 
     case WM_PAINT:

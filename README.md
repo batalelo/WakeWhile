@@ -58,7 +58,9 @@ the network, between build stages. One quiet second is not the end of the job.
 
 - Pick a row, press **DON'T SLEEP**. The window hides; a dot appears by the
   clock: **green** working, **amber** quiet but still holding, **grey**
-  released and waiting for work to resume.
+  released and waiting for work to resume. Windows 11 hides new tray icons
+  by default -- if you want it always visible, Settings > Personalisation >
+  Taskbar > Other system tray icons.
 - Left-click the tray icon to bring the window back, right-click for
   Show / Release / Exit.
 - **Keep the screen on too** is off by default — the machine stays awake but
