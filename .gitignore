@@ -1,4 +1,9 @@
-tools/
+# The compiler is fetched by tools/get-tcc.ps1, not committed.
+tools/tcc/
+
+# Build outputs.
+nosleep.exe
 build/*.exe
-build/*.o
+build/*.png
+*.o
 *.obj

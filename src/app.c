@@ -1,0 +1,832 @@
+/* nosleep -- keeps Windows awake while a chosen app is actually working.
+
+   This file owns the window, the once-a-second tick, and the wiring between
+   the process sampler, the activity rule and the sleep lock. */
+
+#include "wincompat.h"
+#include "config.h"
+#include "theme.h"
+#include "ui.h"
+#include "tray.h"
+#include "applist.h"
+#include "monitor.h"
+#include "activity.h"
+#include "power.h"
+
+/* ------------------------------------------------------------- constants */
+
+#define ID_LIST        100
+
+#define TIMER_TICK     1
+#define MSG_TRAY       (WM_APP + 1)
+#define MSG_SHOW_ME    (WM_APP + 2)
+
+#define MENU_SHOW      201
+#define MENU_RELEASE   202
+#define MENU_EXIT      203
+
+/* Layout in logical pixels; everything is scaled through ui_scale. The
+   height of the list, and therefore of the window, is decided at startup
+   from the monitor work area -- a fixed height overflows a 768 px screen. */
+#define WIN_W    400
+#define PAD       16
+#define HEAD_Y    16
+#define HEAD_H    40
+#define LIST_Y    64
+#define INFO_H    18
+#define CHK_H     22
+#define BTN_H     46
+#define ROW_H     40
+#define ROWS_MAX  10
+#define ROWS_MIN   4
+
+#define WIN_STYLE (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX)
+
+/* Everything below the list, in logical pixels: gap, info, gap, checkbox,
+   gap, button, bottom padding. */
+#define BELOW_LIST (10 + INFO_H + 10 + CHK_H + 10 + BTN_H + 16)
+
+typedef enum { MODE_PICK = 0, MODE_WATCH = 1 } Mode;
+
+typedef enum { HOT_NONE = 0, HOT_BUTTON, HOT_CHECK, HOT_REFRESH } HotItem;
+
+/* ----------------------------------------------------------------- state */
+
+static HINSTANCE g_inst;
+static HWND      g_wnd;
+static HWND      g_list;
+static Theme     g_theme;
+static UiList    g_list_state;
+
+static AppEntry  g_apps[CFG_MAX_APPS];
+static int       g_app_count;
+
+static Mode      g_mode = MODE_PICK;
+static Monitor   g_monitor;
+static Activity  g_activity;
+static ActivityState g_state = ACT_IDLE;
+
+static int       g_keep_display;
+static WCHAR     g_watch_title[128];
+static WCHAR     g_watch_exe[64];
+static unsigned int g_watch_pid;
+
+static HotItem   g_hot;
+static HotItem   g_pressed;
+static WCHAR     g_notice[128];
+
+/* ----------------------------------------------------------- tiny string */
+
+static void wcopy(WCHAR *dst, const WCHAR *src, int cap)
+{
+    int i = 0;
+    if (cap <= 0) return;
+    while (src[i] && i < cap - 1) { dst[i] = src[i]; i++; }
+    dst[i] = 0;
+}
+
+static int wlen(const WCHAR *s)
+{
+    int i = 0;
+    while (s[i]) i++;
+    return i;
+}
+
+/* ---------------------------------------------------------------- layout */
+
+/* Computed once, in device pixels. */
+static int g_list_h;
+static int g_info_y;
+static int g_check_y;
+static int g_button_y;
+static int g_client_h;
+
+/* `y` is already in device pixels; x, w and h are logical. */
+static RECT rect_at(int x, int y, int w, int h)
+{
+    RECT r;
+    r.left = ui_scale(x);
+    r.top = y;
+    r.right = ui_scale(x + w);
+    r.bottom = y + ui_scale(h);
+    return r;
+}
+
+static RECT rect_of(int x, int y, int w, int h)
+{
+    return rect_at(x, ui_scale(y), w, h);
+}
+
+static void compute_layout(void)
+{
+    RECT work, frame;
+    int non_client, room, rows;
+
+    if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
+        work.left = 0;
+        work.top = 0;
+        work.right = GetSystemMetrics(SM_CXSCREEN);
+        work.bottom = GetSystemMetrics(SM_CYSCREEN);
+    }
+
+    /* How much the caption and borders add on top of the client area. */
+    frame.left = 0; frame.top = 0; frame.right = 100; frame.bottom = 100;
+    AdjustWindowRect(&frame, WIN_STYLE, FALSE);
+    non_client = (frame.bottom - frame.top) - 100;
+
+    room = (work.bottom - work.top) - non_client - ui_scale(24)
+           - ui_scale(LIST_Y) - ui_scale(BELOW_LIST);
+
+    rows = room / ui_scale(ROW_H);
+    if (rows > ROWS_MAX) rows = ROWS_MAX;
+    if (rows < ROWS_MIN) rows = ROWS_MIN;
+
+    g_list_h   = rows * ui_scale(ROW_H);
+    g_info_y   = ui_scale(LIST_Y) + g_list_h + ui_scale(10);
+    g_check_y  = g_info_y + ui_scale(INFO_H + 10);
+    g_button_y = g_check_y + ui_scale(CHK_H + 10);
+    g_client_h = g_button_y + ui_scale(BTN_H + 16);
+}
+
+static RECT button_rect(void) { return rect_at(PAD, g_button_y, WIN_W - 2 * PAD, BTN_H); }
+static RECT check_rect(void)  { return rect_at(PAD, g_check_y, 220, CHK_H); }
+
+static RECT refresh_rect(void)
+{
+    return rect_at(WIN_W - PAD - 70, g_info_y - ui_scale(2), 70, INFO_H + 4);
+}
+
+static int in_rect(const RECT *r, int x, int y)
+{
+    return x >= r->left && x < r->right && y >= r->top && y < r->bottom;
+}
+
+/* -------------------------------------------------------------- app list */
+
+static void refresh_apps(void)
+{
+    unsigned int keep = 0;
+    int i;
+
+    if (g_list_state.sel >= 0 && g_list_state.sel < g_app_count)
+        keep = g_apps[g_list_state.sel].pid;
+
+    g_app_count = applist_collect(g_apps, CFG_MAX_APPS);
+    ui_list_set_count(g_list, g_app_count);
+
+    /* Keep the user's choice pointed at the same app even though the list is
+       in z-order and may well have reshuffled. */
+    g_list_state.sel = -1;
+    if (keep) {
+        for (i = 0; i < g_app_count; i++) {
+            if (g_apps[i].pid == keep) { g_list_state.sel = i; break; }
+        }
+    }
+
+    InvalidateRect(g_list, 0, FALSE);
+    InvalidateRect(g_wnd, 0, FALSE);
+}
+
+/* ------------------------------------------------------------ row drawing */
+
+static void draw_row(HDC dc, int index, const RECT *r, int selected, int hot,
+                     void *user)
+{
+    const UiFonts *f = ui_fonts();
+    const AppEntry *a = &g_apps[index];
+    WCHAR sub[96];
+    RECT title, subtitle;
+    COLORREF tc = selected ? g_theme.text_sel : g_theme.text;
+
+    (void)hot; (void)user;
+
+    if (!g_list_state.enabled) tc = g_theme.text_dim;
+
+    title = *r;
+    title.left += ui_scale(12);
+    title.right -= ui_scale(10);
+    title.top += ui_scale(5);
+    title.bottom = title.top + ui_scale(17);
+
+    subtitle = title;
+    subtitle.top = title.bottom;
+    subtitle.bottom = subtitle.top + ui_scale(15);
+
+    ui_text(dc, &title, a->title[0] ? a->title : a->exe, f->body, tc,
+            DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+    wcopy(sub, a->exe[0] ? a->exe : L"?", 96);
+    {
+        int n = wlen(sub);
+        WCHAR tail[32];
+        wsprintfW(tail, L"  \x00b7  PID %u", a->pid);
+        wcopy(sub + n, tail, 96 - n);
+    }
+    ui_text(dc, &subtitle, sub, f->small, g_theme.text_dim,
+            DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+}
+
+/* -------------------------------------------------------- status strings */
+
+/* CPU as a percentage of one core, so 340 means three and a bit cores. */
+static unsigned int cpu_percent(void)
+{
+    return g_activity.cpu_permille / 10;
+}
+
+static void fmt_rate(WCHAR *out, unsigned int bps)
+{
+    if (bps >= 1024u * 1024u)
+        wsprintfW(out, L"%u.%u MB/s", bps >> 20, ((bps >> 16) & 15) * 10 / 16);
+    else
+        wsprintfW(out, L"%u KB/s", bps >> 10);
+}
+
+static void fmt_status(WCHAR *out, int cap)
+{
+    WCHAR line[192];
+    WCHAR rate[32];
+
+    if (g_state == ACT_BUSY) {
+        if (g_activity.cpu_permille >= CFG_CPU_BUSY_PERMILLE) {
+            wsprintfW(line, L"working \x00b7 %u%% of one core", cpu_percent());
+        } else {
+            fmt_rate(rate, g_activity.io_bps);
+            wsprintfW(line, L"working \x00b7 %s", rate);
+        }
+    } else if (g_state == ACT_GRACE) {
+        unsigned int quiet = (unsigned int)(g_activity.quiet_ms / 1000);
+        unsigned int total = CFG_GRACE_MS / 1000;
+        wsprintfW(line, L"quiet %us of %us \x00b7 still holding", quiet, total);
+    } else {
+        wsprintfW(line, L"released \x00b7 waiting for work");
+    }
+
+    if (!power_ok())
+        wcopy(line + wlen(line), L"  (Windows refused the lock)", 40);
+
+    wcopy(out, line, cap);
+}
+
+static TrayState tray_state_now(void)
+{
+    if (g_state == ACT_BUSY) return TRAY_HOLDING;
+    if (g_state == ACT_GRACE) return TRAY_GRACE;
+    return TRAY_OFF;
+}
+
+static void update_tray(void)
+{
+    WCHAR tip[128];
+    WCHAR name[64];
+
+    wcopy(name, g_watch_exe[0] ? g_watch_exe : g_watch_title, 64);
+
+    if (g_state == ACT_IDLE)
+        wsprintfW(tip, L"nosleep \x00b7 %s \x00b7 released", name);
+    else if (g_state == ACT_GRACE)
+        wsprintfW(tip, L"nosleep \x00b7 %s \x00b7 quiet, still holding", name);
+    else
+        wsprintfW(tip, L"nosleep \x00b7 %s \x00b7 %u%% of one core", name,
+                  cpu_percent());
+
+    tray_set(tray_state_now(), tip);
+}
+
+/* -------------------------------------------------------------- painting */
+
+static void paint_checkbox(HDC dc)
+{
+    const UiFonts *f = ui_fonts();
+    RECT r = check_rect();
+    RECT box, label;
+    COLORREF frame = (g_hot == HOT_CHECK) ? g_theme.accent : g_theme.border;
+
+    box.left = r.left;
+    box.top = r.top + (r.bottom - r.top - ui_scale(16)) / 2;
+    box.right = box.left + ui_scale(16);
+    box.bottom = box.top + ui_scale(16);
+
+    if (g_keep_display) {
+        ui_fill_round(dc, &box, ui_scale(3), g_theme.accent);
+        /* A tick drawn with two strokes: cheaper than a font glyph and it
+           lands on the pixel grid at any scale. */
+        {
+            HPEN p = CreatePen(PS_SOLID, ui_scale(2), g_theme.accent_text);
+            HGDIOBJ op = SelectObject(dc, p);
+            int x = box.left, y = box.top, s = ui_scale(16);
+            MoveToEx(dc, x + s * 3 / 10, y + s / 2, 0);
+            LineTo(dc, x + s * 9 / 20, y + s * 7 / 10);
+            LineTo(dc, x + s * 3 / 4, y + s * 3 / 10);
+            SelectObject(dc, op);
+            DeleteObject(p);
+        }
+    } else {
+        ui_frame_round(dc, &box, ui_scale(3), frame);
+    }
+
+    label = r;
+    label.left = box.right + ui_scale(9);
+    ui_text(dc, &label, L"Keep the screen on too", f->body, g_theme.text,
+            DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+}
+
+static void paint_button(HDC dc)
+{
+    const UiFonts *f = ui_fonts();
+    RECT r = button_rect();
+    const WCHAR *label;
+    COLORREF back, fore;
+    int usable;
+
+    if (g_mode == MODE_WATCH) {
+        label = L"RELEASE";
+        usable = 1;
+    } else {
+        label = L"DON'T SLEEP";
+        usable = (g_list_state.sel >= 0);
+    }
+
+    if (!usable) {
+        back = g_theme.muted;
+        fore = g_theme.muted_text;
+    } else if (g_pressed == HOT_BUTTON) {
+        back = g_theme.accent_down;
+        fore = g_theme.accent_text;
+    } else if (g_hot == HOT_BUTTON) {
+        back = g_theme.accent_hot;
+        fore = g_theme.accent_text;
+    } else {
+        back = g_theme.accent;
+        fore = g_theme.accent_text;
+    }
+
+    ui_fill_round(dc, &r, ui_scale(6), back);
+    ui_text(dc, &r, label, f->button, fore,
+            DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_NOPREFIX);
+}
+
+static void paint_header(HDC dc)
+{
+    const UiFonts *f = ui_fonts();
+    RECT r = rect_of(PAD, HEAD_Y, WIN_W - 2 * PAD, HEAD_H);
+
+    if (g_mode == MODE_WATCH) {
+        RECT dot, name, status;
+        WCHAR line[224];
+        COLORREF c = (g_state == ACT_BUSY) ? g_theme.ok
+                   : (g_state == ACT_GRACE) ? g_theme.warn
+                   : g_theme.off;
+
+        dot.left = r.left;
+        dot.top = r.top + ui_scale(6);
+        dot.right = dot.left + ui_scale(9);
+        dot.bottom = dot.top + ui_scale(9);
+        ui_fill_round(dc, &dot, ui_scale(4), c);
+
+        name = r;
+        name.left += ui_scale(17);
+        name.bottom = name.top + ui_scale(19);
+        ui_text(dc, &name, g_watch_title[0] ? g_watch_title : g_watch_exe,
+                f->head, g_theme.text,
+                DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+        fmt_status(line, 224);
+        status = r;
+        status.left += ui_scale(17);
+        status.top = name.bottom;
+        ui_text(dc, &status, line, f->small, g_theme.text_dim,
+                DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+    } else {
+        ui_text(dc, &r,
+                L"Pick the app you are waiting on. Windows stays awake for as "
+                L"long as it keeps working.",
+                f->small, g_theme.text_dim,
+                DT_WORDBREAK | DT_NOPREFIX);
+    }
+}
+
+static void paint_info(HDC dc)
+{
+    const UiFonts *f = ui_fonts();
+    RECT left = rect_at(PAD, g_info_y, 240, INFO_H);
+    RECT right = refresh_rect();
+    WCHAR line[128];
+
+    if (g_notice[0]) {
+        wcopy(line, g_notice, 128);
+    } else if (g_mode == MODE_WATCH) {
+        wsprintfW(line, L"watching PID %u and everything it spawns",
+                  g_watch_pid);
+    } else {
+        wsprintfW(line, L"%d open apps", g_app_count);
+    }
+
+    ui_text(dc, &left, line, f->small, g_theme.text_dim,
+            DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+    if (g_mode == MODE_PICK)
+        ui_text(dc, &right, L"Refresh", f->small,
+                (g_hot == HOT_REFRESH) ? g_theme.accent : g_theme.text_dim,
+                DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_NOPREFIX);
+}
+
+static void paint_window(HWND h)
+{
+    PAINTSTRUCT ps;
+    HDC dc, mem;
+    HBITMAP bmp, old_bmp;
+    RECT rc, frame;
+
+    dc = BeginPaint(h, &ps);
+    GetClientRect(h, &rc);
+
+    mem = CreateCompatibleDC(dc);
+    bmp = CreateCompatibleBitmap(dc, rc.right, rc.bottom);
+    old_bmp = (HBITMAP)SelectObject(mem, bmp);
+
+    ui_fill(mem, &rc, g_theme.bg);
+
+    /* The list is a child window; this is the hairline around it. */
+    frame = rect_at(PAD - 1, ui_scale(LIST_Y) - 1, WIN_W - 2 * PAD + 2, 0);
+    frame.bottom = ui_scale(LIST_Y) + g_list_h + 1;
+    ui_frame_round(mem, &frame, ui_scale(6), g_theme.border);
+
+    paint_header(mem);
+    paint_info(mem);
+    paint_checkbox(mem);
+    paint_button(mem);
+
+    BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
+
+    SelectObject(mem, old_bmp);
+    DeleteObject(bmp);
+    DeleteDC(mem);
+    EndPaint(h, &ps);
+}
+
+/* --------------------------------------------------------- mode switching */
+
+static void stop_watching(const WCHAR *why)
+{
+    power_release();
+    tray_remove();
+    g_mode = MODE_PICK;
+    g_state = ACT_IDLE;
+    g_watch_pid = 0;
+    KillTimer(g_wnd, TIMER_TICK);
+    ui_list_set_enabled(g_list, 1);
+    wcopy(g_notice, why ? why : L"", 128);
+    refresh_apps();
+    InvalidateRect(g_wnd, 0, FALSE);
+}
+
+static void start_watching(void)
+{
+    const AppEntry *a;
+    ActivityConfig cfg;
+
+    if (g_list_state.sel < 0 || g_list_state.sel >= g_app_count) return;
+    a = &g_apps[g_list_state.sel];
+
+    if (!monitor_start(&g_monitor, a->pid)) {
+        wcopy(g_notice, L"that app closed before we could attach to it", 128);
+        refresh_apps();
+        return;
+    }
+
+    activity_defaults(&cfg);
+    activity_init(&g_activity, &cfg);
+
+    wcopy(g_watch_title, a->title, 128);
+    wcopy(g_watch_exe, a->exe, 64);
+    g_watch_pid = a->pid;
+    g_notice[0] = 0;
+
+    g_mode = MODE_WATCH;
+    /* Hold immediately: the user pressed the button because work is running
+       right now, and waiting a whole tick to find out would look broken. */
+    g_state = ACT_BUSY;
+    power_apply(1, g_keep_display);
+
+    ui_list_set_enabled(g_list, 0);
+    tray_add();
+    update_tray();
+
+    SetTimer(g_wnd, TIMER_TICK, CFG_POLL_MS, 0);
+    ShowWindow(g_wnd, SW_HIDE);
+}
+
+static void show_main_window(void)
+{
+    ShowWindow(g_wnd, SW_SHOW);
+    SetForegroundWindow(g_wnd);
+    if (g_mode == MODE_PICK) refresh_apps();
+    InvalidateRect(g_wnd, 0, FALSE);
+}
+
+/* ------------------------------------------------------------------ tick */
+
+static void on_tick(void)
+{
+    TrackerDelta d;
+
+    if (!monitor_tick(&g_monitor, &d)) {
+        stop_watching(L"that app has closed \x00b7 the lock was released");
+        show_main_window();
+        return;
+    }
+
+    g_state = activity_update(&g_activity, &d);
+    power_apply(activity_should_hold(g_state), g_keep_display);
+    update_tray();
+
+    if (IsWindowVisible(g_wnd)) InvalidateRect(g_wnd, 0, FALSE);
+}
+
+/* ------------------------------------------------------------- tray menu */
+
+static void show_tray_menu(void)
+{
+    HMENU menu = CreatePopupMenu();
+    POINT pt;
+
+    if (!menu) return;
+
+    AppendMenuW(menu, MF_STRING, MENU_SHOW, L"Show nosleep");
+    if (g_mode == MODE_WATCH)
+        AppendMenuW(menu, MF_STRING, MENU_RELEASE, L"Release the lock");
+    AppendMenuW(menu, MF_SEPARATOR, 0, 0);
+    AppendMenuW(menu, MF_STRING, MENU_EXIT, L"Exit");
+
+    GetCursorPos(&pt);
+    /* Required so the menu closes when the user clicks elsewhere. */
+    SetForegroundWindow(g_wnd);
+    TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, g_wnd, 0);
+    PostMessageW(g_wnd, WM_NULL, 0, 0);
+    DestroyMenu(menu);
+}
+
+/* ---------------------------------------------------------- window proc */
+
+static void on_mouse_move(int x, int y)
+{
+    RECT btn = button_rect(), chk = check_rect(), ref = refresh_rect();
+    HotItem was = g_hot;
+
+    if (in_rect(&btn, x, y)) g_hot = HOT_BUTTON;
+    else if (in_rect(&chk, x, y)) g_hot = HOT_CHECK;
+    else if (g_mode == MODE_PICK && in_rect(&ref, x, y)) g_hot = HOT_REFRESH;
+    else g_hot = HOT_NONE;
+
+    if (g_hot != was) {
+        TRACKMOUSEEVENT tme;
+        InvalidateRect(g_wnd, 0, FALSE);
+        tme.cbSize = sizeof tme;
+        tme.dwFlags = TME_LEAVE;
+        tme.hwndTrack = g_wnd;
+        tme.dwHoverTime = 0;
+        TrackMouseEvent(&tme);
+    }
+}
+
+static void on_click(HotItem item)
+{
+    switch (item) {
+    case HOT_BUTTON:
+        if (g_mode == MODE_WATCH)
+            stop_watching(L"released \x00b7 pick another app when you need to");
+        else
+            start_watching();
+        break;
+
+    case HOT_CHECK:
+        g_keep_display = !g_keep_display;
+        if (g_mode == MODE_WATCH)
+            power_apply(activity_should_hold(g_state), g_keep_display);
+        break;
+
+    case HOT_REFRESH:
+        g_notice[0] = 0;
+        refresh_apps();
+        break;
+
+    default:
+        break;
+    }
+    InvalidateRect(g_wnd, 0, FALSE);
+}
+
+static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    static UINT taskbar_created;
+
+    if (taskbar_created && msg == taskbar_created) {
+        /* Explorer restarted and took every tray icon with it. */
+        if (g_mode == MODE_WATCH) { tray_add(); update_tray(); }
+        return 0;
+    }
+
+    switch (msg) {
+    case WM_CREATE:
+        taskbar_created = tray_restart_message();
+        return 0;
+
+    case WM_PAINT:
+        paint_window(h);
+        return 0;
+
+    case WM_ERASEBKGND:
+        return 1;
+
+    case WM_MOUSEMOVE:
+        on_mouse_move(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+        return 0;
+
+    case WM_MOUSELEAVE:
+        if (g_hot != HOT_NONE) { g_hot = HOT_NONE; InvalidateRect(h, 0, FALSE); }
+        return 0;
+
+    case WM_LBUTTONDOWN:
+        on_mouse_move(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+        if (g_hot != HOT_NONE) {
+            g_pressed = g_hot;
+            SetCapture(h);
+            InvalidateRect(h, 0, FALSE);
+        }
+        return 0;
+
+    case WM_LBUTTONUP: {
+        HotItem was = g_pressed;
+        if (was != HOT_NONE) {
+            ReleaseCapture();
+            g_pressed = HOT_NONE;
+            on_mouse_move(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+            if (g_hot == was) on_click(was);
+        }
+        return 0;
+    }
+
+    case WM_COMMAND:
+        if (LOWORD(wp) == ID_LIST) {
+            if (HIWORD(wp) == UILN_ACTIVATE) start_watching();
+            else InvalidateRect(h, 0, FALSE);   /* the button may light up */
+            return 0;
+        }
+        switch (LOWORD(wp)) {
+        case MENU_SHOW:    show_main_window(); return 0;
+        case MENU_RELEASE: stop_watching(L"released from the tray");
+                           show_main_window(); return 0;
+        case MENU_EXIT:    DestroyWindow(h); return 0;
+        }
+        return 0;
+
+    case MSG_TRAY:
+        if (LOWORD(lp) == WM_LBUTTONUP || LOWORD(lp) == WM_LBUTTONDBLCLK)
+            show_main_window();
+        else if (LOWORD(lp) == WM_RBUTTONUP)
+            show_tray_menu();
+        return 0;
+
+    case MSG_SHOW_ME:
+        show_main_window();
+        return 0;
+
+    case WM_TIMER:
+        if (wp == TIMER_TICK) on_tick();
+        return 0;
+
+    case WM_ACTIVATE:
+        if (LOWORD(wp) != WA_INACTIVE && g_mode == MODE_PICK) refresh_apps();
+        return 0;
+
+    case WM_SETTINGCHANGE:
+        /* Covers the user flipping the system light/dark setting. */
+        theme_load(&g_theme);
+        theme_apply_titlebar(h, g_theme.dark);
+        InvalidateRect(h, 0, TRUE);
+        InvalidateRect(g_list, 0, TRUE);
+        return 0;
+
+    case WM_CLOSE:
+        /* While monitoring, closing the window means "get out of my way",
+           not "stop". The tray icon is what keeps that honest. */
+        if (g_mode == MODE_WATCH) { ShowWindow(h, SW_HIDE); return 0; }
+        DestroyWindow(h);
+        return 0;
+
+    case WM_DESTROY:
+        KillTimer(h, TIMER_TICK);
+        power_release();
+        tray_shutdown();
+        ui_free_fonts();
+        PostQuitMessage(0);
+        return 0;
+    }
+
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+/* ---------------------------------------------------------------- WinMain */
+
+static HWND create_main_window(void)
+{
+    WNDCLASSEXW wc;
+    RECT want, work;
+    DWORD style = WIN_STYLE;
+    int w, ht, x, y;
+    int i;
+    unsigned char *p = (unsigned char *)&wc;
+    HWND h;
+
+    for (i = 0; i < (int)sizeof wc; i++) p[i] = 0;
+    wc.cbSize = sizeof wc;
+    wc.lpfnWndProc = (WNDPROC)wnd_proc;   /* TCC compares __stdcall types loosely */
+    wc.hInstance = g_inst;
+    /* TCC defines IDC_ARROW via the ANSI MAKEINTRESOURCE; the value is a
+       numeric id, so the cast is the whole fix. */
+    wc.hCursor = LoadCursorW(0, (LPCWSTR)IDC_ARROW);
+    wc.lpszClassName = CFG_WND_CLASS;
+    if (!RegisterClassExW(&wc)) return 0;
+
+    want.left = 0;
+    want.top = 0;
+    want.right = ui_scale(WIN_W);
+    want.bottom = g_client_h;
+    AdjustWindowRect(&want, style, FALSE);
+    w = want.right - want.left;
+    ht = want.bottom - want.top;
+
+    /* Centred in the work area rather than left to the default cascade,
+       which on a short screen drops the button behind the taskbar. */
+    if (!SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0)) {
+        work.left = 0;
+        work.top = 0;
+        work.right = GetSystemMetrics(SM_CXSCREEN);
+        work.bottom = GetSystemMetrics(SM_CYSCREEN);
+    }
+    x = work.left + ((work.right - work.left) - w) / 2;
+    y = work.top + ((work.bottom - work.top) - ht) / 2;
+    if (x < work.left) x = work.left;
+    if (y < work.top) y = work.top;
+
+    h = CreateWindowExW(0, CFG_WND_CLASS, CFG_APP_NAME, style,
+                        x, y, w, ht, 0, 0, g_inst, 0);
+    return h;
+}
+
+int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
+{
+    MSG msg;
+    HANDLE once;
+    RECT lr;
+
+    (void)prev; (void)cmd; (void)show;
+    g_inst = inst;
+
+    /* One instance. A second launch just brings the first one forward. */
+    once = CreateMutexW(0, TRUE, CFG_MUTEX_NAME);
+    if (once && GetLastError() == ERROR_ALREADY_EXISTS) {
+        HWND other = FindWindowW(CFG_WND_CLASS, 0);
+        if (other) {
+            PostMessageW(other, MSG_SHOW_ME, 0, 0);
+            SetForegroundWindow(other);
+        }
+        return 0;
+    }
+
+    SetProcessDPIAware();
+    ui_init_metrics();
+    compute_layout();
+    theme_load(&g_theme);
+
+    ui_register_list_class(inst);
+
+    g_wnd = create_main_window();
+    if (!g_wnd) return 1;
+
+    theme_apply_titlebar(g_wnd, g_theme.dark);
+    tray_init(g_wnd, MSG_TRAY);
+
+    g_list_state.theme = &g_theme;
+    g_list_state.draw_row = draw_row;
+    g_list_state.row_h = ui_scale(ROW_H);
+    g_list = ui_create_list(g_wnd, ID_LIST, &g_list_state);
+
+    lr = rect_at(PAD, ui_scale(LIST_Y), WIN_W - 2 * PAD, 0);
+    lr.bottom = lr.top + g_list_h;
+    MoveWindow(g_list, lr.left, lr.top, lr.right - lr.left,
+               lr.bottom - lr.top, FALSE);
+
+    refresh_apps();
+    ShowWindow(g_wnd, SW_SHOW);
+    UpdateWindow(g_wnd);
+
+    while (GetMessageW(&msg, 0, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+
+    if (once) CloseHandle(once);
+    return 0;
+}

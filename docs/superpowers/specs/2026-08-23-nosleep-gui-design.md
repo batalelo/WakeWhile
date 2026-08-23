@@ -63,17 +63,23 @@ interrupted, and they use almost no CPU. We therefore also sample
 
     busy = cpu >= 200 permille (20% of one core)   OR   io >= 1 MB/s
 
-Chosen because there is a wide empty gap between the two populations:
+Chosen because there is a wide empty gap between the two populations. Measured
+with `tests/probe.c` on a real desktop, whole tree summed:
 
-| State | % of one core |
-|---|---|
-| App open, idle | 0 – 0.5 |
-| App with animation / network polling | 1 – 5 |
-| **threshold: 20** | |
-| App doing real work | 50 – 800+ |
+| app | processes in tree | CPU, % of one core | I/O |
+|---|---|---|---|
+| Notepad++, idle | 1 | 0 | 0 |
+| WinSCP, idle | 1 | 0 – 1.5 | 3 B/s |
+| Chrome, idle | 68 | 0 – 4.6 | 0 – 145 KB/s |
+| **threshold** | | **20** | **1 MB/s** |
+| VS Code running a build | 27 | 10 – 37 | 2.4 MB/s |
+| PowerShell burning one core | 4 | 92 – 100 | 0 |
 
-5% would sit inside the noise band — Discord, Teams and Chrome idle in the 3-6%
-range on animations alone, and the lock would never release.
+Chrome is the one that settles it: 68 processes summed together, genuinely
+idle, and still under 5%. The worry that summing a tree would inflate the
+baseline does not survive contact with the data.
+
+5% would sit inside that band and the lock would never release.
 
 ### Grace period
 
@@ -223,3 +229,25 @@ disappears within 60 seconds.
 
 `build.cmd` — one file, no arguments, produces `nosleep.exe`. It compiles and
 runs the tests first and refuses to produce the executable if any test fails.
+
+## What shipped, and where it differed
+
+| Planned | Actual |
+|---|---|
+| under 15 KB | **40 KB.** TinyCC does not optimise; `.text` is 31 KB for ~1,900 lines. A `-nostdlib` MinGW build of the same source would land nearer 12 KB. |
+| fixed 400x496 window | Height is computed from the monitor work area at startup. A fixed height put the button behind the taskbar on a 1366x768 screen. |
+| 60 s grace | unchanged |
+| 20% of one core, whole tree, or 1 MB/s | unchanged, and confirmed against measurements |
+
+### Verified
+
+- 191 headless checks over `tracker.c` and `activity.c`.
+- `probe.c` against a parent whose child burns a core: the parent reads 0%,
+  the tree reads 100%, and when the child exits the tree shrinks with no
+  negative delta and the grace clock starts cleanly.
+- Tree membership checked against `Win32_Process`: Chrome 68 vs 68,
+  VS Code 26 vs 27, Explorer 35 vs 36, single-process apps 1 vs 1.
+- Full UI flow driven by synthetic mouse input: pick, engage, hide to tray,
+  restore, release, toggle the display flag.
+- `SetThreadExecutionState` returned success on every acquire.
+  `powercfg /requests` needs an elevated prompt and is left as a manual check.
