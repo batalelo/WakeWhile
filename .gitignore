@@ -1,0 +1,4 @@
+tools/
+build/*.exe
+build/*.o
+*.obj

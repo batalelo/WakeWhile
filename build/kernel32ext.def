@@ -1,0 +1,7 @@
+LIBRARY kernel32.dll
+
+EXPORTS
+Process32FirstW
+Process32NextW
+GetProcessIoCounters
+QueryFullProcessImageNameW
