@@ -12,16 +12,27 @@
 
 typedef unsigned long long u64;
 
+/* Windows splits a process's I/O three ways, and the split matters here:
+
+     read/write  ReadFile and WriteFile -- real file work.
+     other       everything else: DeviceIoControl, and socket traffic, and
+                 the pipe traffic Electron apps use to talk between their
+                 own processes.
+
+   Lumping them together is what makes an idle VS Code look permanently
+   busy, so they are carried separately all the way to the rule. */
 typedef struct {
     unsigned int pid;
     u64 create_100ns;  /* process creation time; identifies this incarnation */
     u64 cpu_100ns;     /* kernel + user, cumulative since the process started */
-    u64 io_bytes;      /* read + write + other, cumulative                    */
+    u64 rw_bytes;      /* read + write, cumulative                            */
+    u64 other_bytes;   /* everything else, cumulative                         */
 } ProcSample;
 
 typedef struct {
     u64 d_cpu_100ns;
-    u64 d_io_bytes;
+    u64 d_rw_bytes;
+    u64 d_other_bytes;
     u64 d_wall_100ns;
     int n_procs;       /* processes in the tree at this instant */
 } TrackerDelta;

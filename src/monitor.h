@@ -13,6 +13,11 @@ typedef struct {
     u64          root_create_100ns;
     Tracker      tracker;
     int          alive;
+
+    /* The tree as of the last tick, for whoever needs to ask another
+       question about the same processes -- the connection count does. */
+    unsigned int pids[CFG_MAX_PROCS];
+    int          pid_count;
 } Monitor;
 
 /* Returns 0 if the process cannot be opened at all -- gone, or protected. */

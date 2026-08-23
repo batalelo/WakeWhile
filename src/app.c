@@ -12,6 +12,8 @@
 #include "monitor.h"
 #include "activity.h"
 #include "power.h"
+#include "netstat.h"
+#include "logfile.h"
 
 /* ------------------------------------------------------------- constants */
 
@@ -231,7 +233,7 @@ static void draw_row(HDC dc, int index, const RECT *r, int selected, int hot,
 /* CPU as a percentage of one core, so 340 means three and a bit cores. */
 static unsigned int cpu_percent(void)
 {
-    return g_activity.cpu_permille / 10;
+    return g_activity.cpu.smoothed / 10;
 }
 
 static void fmt_rate(WCHAR *out, unsigned int bps)
@@ -248,11 +250,21 @@ static void fmt_status(WCHAR *out, int cap)
     WCHAR rate[32];
 
     if (g_state == ACT_BUSY) {
-        if (g_activity.cpu_permille >= CFG_CPU_BUSY_PERMILLE) {
+        switch (g_activity.why) {
+        case WHY_CPU:
             wsprintfW(line, L"working \x00b7 %u%% of one core", cpu_percent());
-        } else {
-            fmt_rate(rate, g_activity.io_bps);
-            wsprintfW(line, L"working \x00b7 %s", rate);
+            break;
+        case WHY_DISK:
+            fmt_rate(rate, g_activity.disk.smoothed);
+            wsprintfW(line, L"working \x00b7 reading and writing %s", rate);
+            break;
+        case WHY_NET:
+            fmt_rate(rate, g_activity.net.smoothed);
+            wsprintfW(line, L"working \x00b7 network %s", rate);
+            break;
+        default:
+            wsprintfW(line, L"holding \x00b7 measuring...");
+            break;
         }
     } else if (g_state == ACT_GRACE) {
         unsigned int quiet = (unsigned int)(g_activity.quiet_ms / 1000);
@@ -469,6 +481,7 @@ static void paint_window(HWND h)
 
 static void stop_watching(const WCHAR *why)
 {
+    if (g_mode == MODE_WATCH) log_line("stopped watching; lock released");
     power_release();
     tray_remove();
     g_mode = MODE_PICK;
@@ -513,6 +526,21 @@ static void start_watching(void)
     tray_add();
     update_tray();
 
+    {
+        char line[128];
+        log_linew("watching: ", a->title);
+        wsprintfA(line, "  pid %u, plus every process it spawns", a->pid);
+        log_line(line);
+        log_linew("  image: ", a->exe);
+        wsprintfA(line, "  bars: cpu %u permille | disk %u B/s | net %u B/s"
+                        "  (each lowered to this app.s own baseline when it "
+                        "shows one)",
+                  cfg.cpu.absolute, cfg.disk.absolute, cfg.net.absolute);
+        log_line(line);
+        log_line(g_keep_display ? "  screen will be kept on too"
+                                : "  screen may still turn off");
+    }
+
     SetTimer(g_wnd, TIMER_TICK, CFG_POLL_MS, 0);
     ShowWindow(g_wnd, SW_HIDE);
 }
@@ -527,19 +555,57 @@ static void show_main_window(void)
 
 /* ------------------------------------------------------------------ tick */
 
+/* One line per tick, with every number the rule looked at. This is what
+   turns "it never lets my machine sleep" into something you can read.
+   A trailing r marks a bar the app's own baseline lowered. */
+static void log_tick(const TrackerDelta *d, int conns, int held)
+{
+    char line[320];
+    const Activity *a = &g_activity;
+
+    wsprintfA(line,
+        "tick procs=%d cpu=%u/%u%s disk=%u/%u%s net=%u/%u%s conn=%d "
+        "-> %s (%s) quiet=%us lock=%s",
+        d->n_procs,
+        a->cpu.smoothed,  a->cpu.bar,  a->cpu.relative_used  ? "r" : "",
+        a->disk.smoothed, a->disk.bar, a->disk.relative_used ? "r" : "",
+        a->net.smoothed,  a->net.bar,  a->net.relative_used  ? "r" : "",
+        conns,
+        g_state == ACT_BUSY ? "BUSY" : g_state == ACT_GRACE ? "grace" : "IDLE",
+        activity_reason_name(a->why),
+        (unsigned)(a->quiet_ms / 1000),
+        held ? (power_ok() ? "held" : "REFUSED") : "off");
+
+    log_line(line);
+}
+
 static void on_tick(void)
 {
     TrackerDelta d;
+    ActivityState before = g_state;
+    int conns, held;
 
     if (!monitor_tick(&g_monitor, &d)) {
+        log_line("the watched process exited");
         stop_watching(L"that app has closed \x00b7 the lock was released");
         show_main_window();
         return;
     }
 
-    g_state = activity_update(&g_activity, &d);
-    power_apply(activity_should_hold(g_state), g_keep_display);
+    conns = netstat_established(g_monitor.pids, g_monitor.pid_count);
+    g_state = activity_update(&g_activity, &d, conns);
+    held = activity_should_hold(g_state);
+    power_apply(held, g_keep_display);
     update_tray();
+
+    log_tick(&d, conns, held);
+    if (g_state != before) {
+        char msg[96];
+        wsprintfA(msg, "  ^ state changed: %s -> %s",
+                  before == ACT_BUSY ? "BUSY" : before == ACT_GRACE ? "grace" : "IDLE",
+                  g_state == ACT_BUSY ? "BUSY" : g_state == ACT_GRACE ? "grace" : "IDLE");
+        log_line(msg);
+    }
 
     if (IsWindowVisible(g_wnd)) InvalidateRect(g_wnd, 0, FALSE);
 }
@@ -720,6 +786,9 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_DESTROY:
         KillTimer(h, TIMER_TICK);
         power_release();
+        log_line("nosleep exited; lock released");
+        log_close();
+        netstat_shutdown();
         tray_shutdown();
         ui_free_fonts();
         PostQuitMessage(0);
@@ -798,6 +867,10 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     }
 
     SetProcessDPIAware();
+    log_open();
+    log_line("--------------------------------------------------------");
+    log_line("nosleep started");
+    netstat_init();
     ui_init_metrics();
     compute_layout();
     theme_load(&g_theme);

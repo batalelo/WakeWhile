@@ -7,3 +7,8 @@ build/*.exe
 build/*.png
 *.o
 *.obj
+
+# Diagnostic logs and traces from testing.
+nosleep.log
+build/*.log
+build/trickle.ps1

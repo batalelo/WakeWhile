@@ -49,13 +49,16 @@ static int sample_process(unsigned int pid, ProcSample *s)
     s->create_100ns = ft_to_u64(&create);
     s->cpu_100ns = ft_to_u64(&kernel) + ft_to_u64(&user);
 
-    /* I/O is a nice-to-have: it is what catches downloads and file copies,
-       but a process we may not query for it is still worth watching. */
-    if (GetProcessIoCounters(h, &io))
-        s->io_bytes = io.ReadTransferCount + io.WriteTransferCount +
-                      io.OtherTransferCount;
-    else
-        s->io_bytes = 0;
+    /* Read/write is real file work; "other" is DeviceIoControl, sockets and
+       the pipes Electron apps talk to themselves over. Kept apart because
+       the rule treats them completely differently. */
+    if (GetProcessIoCounters(h, &io)) {
+        s->rw_bytes = io.ReadTransferCount + io.WriteTransferCount;
+        s->other_bytes = io.OtherTransferCount;
+    } else {
+        s->rw_bytes = 0;
+        s->other_bytes = 0;
+    }
 
     CloseHandle(h);
     return 1;
@@ -135,8 +138,11 @@ int monitor_tick(Monitor *m, TrackerDelta *out)
     ProcSample root_sample;
     int n, i, count = 0;
 
+    m->pid_count = 0;
+
     out->d_cpu_100ns = 0;
-    out->d_io_bytes = 0;
+    out->d_rw_bytes = 0;
+    out->d_other_bytes = 0;
     out->d_wall_100ns = 0;
     out->n_procs = 0;
 
@@ -160,7 +166,10 @@ int monitor_tick(Monitor *m, TrackerDelta *out)
 
     mark_tree(nodes, n, m->root_pid);
 
-    samples[count++] = root_sample;
+    m->pid_count = 0;
+    samples[count] = root_sample;
+    m->pids[m->pid_count++] = root_sample.pid;
+    count++;
 
     for (i = 0; i < n && count < CFG_MAX_PROCS; i++) {
         ProcSample s;
@@ -172,6 +181,7 @@ int monitor_tick(Monitor *m, TrackerDelta *out)
            A genuine descendant cannot predate its root. */
         if (s.create_100ns < m->root_create_100ns) continue;
 
+        m->pids[m->pid_count++] = s.pid;
         samples[count++] = s;
     }
 

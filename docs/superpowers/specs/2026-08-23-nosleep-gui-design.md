@@ -1,7 +1,10 @@
 # nosleep GUI — Design
 
 **Date:** 2026-08-23
-**Status:** Approved
+**Status:** Approved. The activity rule was revised on 2026-08-24 after it
+held the lock permanently on VS Code -- see
+[2026-08-24-activity-rule-revision.md](2026-08-24-activity-rule-revision.md),
+which supersedes the "activity rule" section below.
 
 ## Problem
 

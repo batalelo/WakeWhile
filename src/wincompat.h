@@ -96,4 +96,12 @@ WINUSERAPI BOOL WINAPI SetProcessDPIAware(void);
 #define FW_SEMIBOLD 600
 #endif
 
+
+/* winnls.h is not shipped; only these two pieces of it are needed. */
+#ifndef CP_UTF8
+#define CP_UTF8 65001
+#endif
+WINBASEAPI int WINAPI WideCharToMultiByte(UINT, DWORD, LPCWSTR, int, LPSTR,
+                                          int, LPCSTR, LPBOOL);
+
 #endif

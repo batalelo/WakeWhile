@@ -28,7 +28,8 @@ TrackerDelta tracker_update(Tracker *t, const ProcSample *snap, int n,
     int i;
 
     d.d_cpu_100ns = 0;
-    d.d_io_bytes = 0;
+    d.d_rw_bytes = 0;
+    d.d_other_bytes = 0;
     d.d_wall_100ns = 0;
     d.n_procs = n;
 
@@ -49,12 +50,15 @@ TrackerDelta tracker_update(Tracker *t, const ProcSample *snap, int n,
                than wrap a u64 into a spurious eternity of activity. */
             if (cur->cpu_100ns > old->cpu_100ns)
                 d.d_cpu_100ns += cur->cpu_100ns - old->cpu_100ns;
-            if (cur->io_bytes > old->io_bytes)
-                d.d_io_bytes += cur->io_bytes - old->io_bytes;
+            if (cur->rw_bytes > old->rw_bytes)
+                d.d_rw_bytes += cur->rw_bytes - old->rw_bytes;
+            if (cur->other_bytes > old->other_bytes)
+                d.d_other_bytes += cur->other_bytes - old->other_bytes;
         } else if (cur->create_100ns > t->last_100ns) {
             /* Born during this tick, so everything it has spent is new. */
             d.d_cpu_100ns += cur->cpu_100ns;
-            d.d_io_bytes += cur->io_bytes;
+            d.d_rw_bytes += cur->rw_bytes;
+            d.d_other_bytes += cur->other_bytes;
         }
         /* Otherwise it predates the last sample but we are only seeing it now
            -- the tree grew sideways, or a handle finally opened. Counting its
