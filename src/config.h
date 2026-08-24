@@ -71,11 +71,29 @@
 #define CFG_MEM_MAX            2000000u
 #define CFG_MEM_MULTIPLE       3u
 
-/* --------------------------------------------------------------- releasing */
+/* --------------------------------------------------------------- releasing
 
-/* A single quiet tick must not drop the lock: real workloads pause on I/O,
-   on the network, and between build stages. */
-#define CFG_GRACE_MS           60000u     /* 60 s */
+   This, not the thresholds, is what tells work apart from idleness -- and it
+   took measuring both to see why.
+
+   Watched over 300 s of real work and 180 s of true idleness, VS Code with an
+   AI session open reads HIGHER when idle than when working: 295 permille of a
+   core against 205, and 2.28 MB/s of disk against 652 KB/s. While the model
+   is generating, the editor itself does almost nothing; while nobody is
+   there, its file watcher and extension host hum along steadily. No level
+   separates the two, and lowering the bars to catch the work makes idleness
+   read as 99 percent busy.
+
+   What does separate them is how long the quiet stretches run:
+
+       working   longest quiet gap   74 s
+       idle      longest quiet gap  161 s
+
+   So the wait is set between the two. At 120 s work keeps the lock with 46 s
+   to spare and an idle machine still gets to sleep with 41 s to spare. */
+#define CFG_GRACE_DEFAULT     120000u   /* 2 minutes */
+#define CFG_GRACE_MIN          30000u
+#define CFG_GRACE_MAX         600000u
 
 /* ------------------------------------------------------------------ limits */
 

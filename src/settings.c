@@ -84,6 +84,7 @@ void settings_load(ActivityConfig *cfg, int *keep_display)
             else if (starts_with(L, "disk="))    set_clamped(&cfg->ch[CH_DISK], parse_uint(L + 5));
             else if (starts_with(L, "net="))     set_clamped(&cfg->ch[CH_NET],  parse_uint(L + 4));
             else if (starts_with(L, "mem="))     set_clamped(&cfg->ch[CH_MEM],  parse_uint(L + 4));
+            else if (starts_with(L, "wait="))    set_clamped(&cfg->wait,      parse_uint(L + 5));
             else if (starts_with(L, "display=")) *keep_display = parse_uint(L + 8) != 0;
         }
         line_start = i + 1;
@@ -107,16 +108,18 @@ void settings_save(const ActivityConfig *cfg, int keep_display)
     wsprintfA(buf,
         "# nosleep settings. Delete this file to go back to the defaults.\r\n"
         "# cpu is permille of one core, disk and net are bytes per second,\r\n"
-        "# mem is page faults per second.\r\n"
+        "# mem is page faults per second, wait is milliseconds.\r\n"
         "cpu=%u\r\n"
         "disk=%u\r\n"
         "net=%u\r\n"
         "mem=%u\r\n"
+        "wait=%u\r\n"
         "display=%u\r\n",
         cfg->ch[CH_CPU].threshold,
         cfg->ch[CH_DISK].threshold,
         cfg->ch[CH_NET].threshold,
         cfg->ch[CH_MEM].threshold,
+        cfg->wait.threshold,
         keep_display ? 1u : 0u);
 
     WriteFile(f, buf, (DWORD)alen(buf), &written, 0);

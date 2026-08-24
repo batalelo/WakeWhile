@@ -35,12 +35,16 @@
 #define WIN_W     430
 #define PAD        16
 #define HEAD_Y     14
-#define HEAD_H     34
-#define LIST_Y     54
+#define HEAD_H     38   /* a heading line and a line of explanation */
+#define LIST_Y     58
 #define INFO_H     16
 #define ROW_H      40
 #define ROWS_MAX    8
 #define ROWS_MIN    3
+
+/* The same heading treatment over the sliders, so neither half of the window
+   is a set of controls with nothing to say what they are for. */
+#define PANEL_HEAD_H 34
 
 /* One sensitivity row: label, slider and threshold on top, the live reading
    underneath. */
@@ -55,8 +59,15 @@
 
 /* Everything below the list: gap, info, gap, four rows, gap, checkbox, gap,
    button, bottom padding. */
-#define BELOW_LIST (8 + INFO_H + 12 + (CH_ROW_H * CH_COUNT) + 10 + CHK_H \
-                    + 10 + BTN_H + 14)
+/* The four channels, then the wait. The wait is not a channel -- it is how
+   long everything has to stay under bar before the lock goes -- but it earns
+   the same kind of row because measurement says it is the control that
+   actually decides whether work is told apart from idleness. */
+#define SL_WAIT   CH_COUNT
+#define SL_COUNT  (CH_COUNT + 1)
+
+#define BELOW_LIST (8 + INFO_H + 14 + PANEL_HEAD_H + (CH_ROW_H * SL_COUNT) \
+                    + 10 + CHK_H + 10 + BTN_H + 14)
 
 typedef enum { MODE_PICK = 0, MODE_WATCH = 1 } Mode;
 
@@ -79,7 +90,7 @@ static Activity  g_activity;
 static ActivityConfig g_cfg;
 static ActivityState g_state = ACT_IDLE;
 
-static UiSlider  g_slider[CH_COUNT];
+static UiSlider  g_slider[SL_COUNT];
 static int       g_dragging = -1;   /* which slider, or -1 */
 
 static int       g_keep_display;
@@ -116,6 +127,7 @@ static int wlen(const WCHAR *s)
 /* Computed once, in device pixels. */
 static int g_list_h;
 static int g_info_y;
+static int g_head2_y;
 static int g_panel_y;
 static int g_check_y;
 static int g_button_y;
@@ -163,8 +175,9 @@ static void compute_layout(void)
 
     g_list_h   = rows * ui_scale(ROW_H);
     g_info_y   = ui_scale(LIST_Y) + g_list_h + ui_scale(8);
-    g_panel_y  = g_info_y + ui_scale(INFO_H + 12);
-    g_check_y  = g_panel_y + ui_scale(CH_ROW_H * CH_COUNT + 10);
+    g_head2_y  = g_info_y + ui_scale(INFO_H + 14);
+    g_panel_y  = g_head2_y + ui_scale(PANEL_HEAD_H);
+    g_check_y  = g_panel_y + ui_scale(CH_ROW_H * SL_COUNT + 10);
     g_button_y = g_check_y + ui_scale(CHK_H + 10);
     g_client_h = g_button_y + ui_scale(BTN_H + 14);
 }
@@ -191,7 +204,7 @@ static int in_rect(const RECT *r, int x, int y)
 static void place_sliders(void)
 {
     int i;
-    for (i = 0; i < CH_COUNT; i++)
+    for (i = 0; i < SL_COUNT; i++)
         g_slider[i].track = rect_at(PAD + CH_LABEL_W, channel_row_y(i),
                                     CH_SLIDER_W, 20);
 }
@@ -300,8 +313,18 @@ static const WCHAR *channel_label(int ch)
     case CH_CPU:  return L"CPU";
     case CH_DISK: return L"Disk";
     case CH_NET:  return L"Net";
-    default:      return L"RAM";
+    case CH_MEM:  return L"RAM";
+    default:      return L"Wait";
     }
+}
+
+/* Milliseconds as something readable: 45s, 2m, 2m 30s. */
+static void fmt_wait(WCHAR *out, unsigned int ms)
+{
+    unsigned int s = ms / 1000;
+    if (s < 60)          wsprintfW(out, L"%us", s);
+    else if (s % 60 == 0) wsprintfW(out, L"%um", s / 60);
+    else                 wsprintfW(out, L"%um %us", s / 60, s % 60);
 }
 
 /* CPU as a percentage of one core, so 340 means three and a bit cores. */
@@ -326,7 +349,7 @@ static void fmt_status(WCHAR *out, int cap)
         }
     } else if (g_state == ACT_GRACE) {
         unsigned int quiet = (unsigned int)(g_activity.quiet_ms / 1000);
-        unsigned int total = CFG_GRACE_MS / 1000;
+        unsigned int total = g_cfg.wait.threshold / 1000;
         wsprintfW(line, L"quiet %us of %us \x00b7 still holding", quiet, total);
     } else {
         wsprintfW(line, L"released \x00b7 waiting for work");
@@ -499,7 +522,41 @@ static void paint_channels(HDC dc)
                     DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_NOPREFIX);
         }
     }
+
+    /* The wait, which measurement says is the control that really decides
+       whether work is told apart from an app just ticking over. */
+    {
+        int y = channel_row_y(SL_WAIT);
+        RECT label = rect_at(PAD, y, CH_LABEL_W, 20);
+        RECT value = rect_at(PAD + CH_LABEL_W + CH_SLIDER_W + 8, y,
+                             WIN_W - 2 * PAD - CH_LABEL_W - CH_SLIDER_W - 8, 20);
+        RECT live  = rect_at(PAD + CH_LABEL_W, y + ui_scale(18),
+                             WIN_W - 2 * PAD - CH_LABEL_W, 16);
+        WCHAR text[80], span[24];
+
+        ui_text(dc, &label, L"Wait", f->body, g_theme.text_dim,
+                DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+        ui_draw_slider(dc, &g_theme, &g_slider[SL_WAIT], 1);
+
+        fmt_wait(span, g_cfg.wait.threshold);
+        ui_text(dc, &value, span, f->body, g_theme.text,
+                DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_NOPREFIX);
+
+        if (g_mode == MODE_WATCH && g_state != ACT_BUSY) {
+            WCHAR sofar[24];
+            fmt_wait(sofar, (unsigned int)g_activity.quiet_ms);
+            wsprintfW(text, L"quiet for %s of %s", sofar, span);
+        } else {
+            wsprintfW(text, L"how long it must stay quiet before letting go");
+        }
+        ui_text(dc, &live, text, f->small,
+                (g_mode == MODE_WATCH && g_state == ACT_GRACE) ? g_theme.warn
+                                                               : g_theme.text_dim,
+                DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+    }
 }
+
+static void paint_step(HDC dc, int y, const WCHAR *title, const WCHAR *sub);
 
 static void paint_header(HDC dc)
 {
@@ -533,12 +590,25 @@ static void paint_header(HDC dc)
         ui_text(dc, &status, line, f->small, g_theme.text_dim,
                 DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
     } else {
-        ui_text(dc, &r,
-                L"Pick the app you are waiting on. Windows stays awake for as "
-                L"long as it keeps working.",
-                f->small, g_theme.text_dim,
-                DT_WORDBREAK | DT_NOPREFIX);
+        paint_step(dc, ui_scale(HEAD_Y),
+                   L"1  \x2022  Which app are you waiting on?",
+                   L"Windows will stay awake while that app is working.");
     }
+}
+
+/* Both halves of the window get a numbered heading and a line saying what
+   they are for. Without them the window is a list and four unlabelled
+   sliders, and nothing tells you what to do with either. */
+static void paint_step(HDC dc, int y, const WCHAR *title, const WCHAR *sub)
+{
+    const UiFonts *f = ui_fonts();
+    RECT t = rect_at(PAD, y, WIN_W - 2 * PAD, 19);
+    RECT s = rect_at(PAD, y + ui_scale(19), WIN_W - 2 * PAD, 15);
+
+    ui_text(dc, &t, title, f->head, g_theme.text,
+            DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+    ui_text(dc, &s, sub, f->small, g_theme.text_dim,
+            DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
 }
 
 static void paint_info(HDC dc)
@@ -589,6 +659,8 @@ static void paint_window(HWND h)
 
     paint_header(mem);
     paint_info(mem);
+    paint_step(mem, g_head2_y, L"2  \x2022  What counts as working?",
+               L"Each row is a limit. Cross any one and it stays awake.");
     paint_channels(mem);
     paint_checkbox(mem);
     paint_button(mem);
@@ -607,7 +679,7 @@ static void log_thresholds(void)
 {
     char line[256];
     wsprintfA(line, "  thresholds: cpu %u permille | disk %u B/s | net %u B/s"
-                    " | mem %u faults/s",
+                    " | mem %u faults/s | wait %us",
               g_cfg.ch[CH_CPU].threshold, g_cfg.ch[CH_DISK].threshold,
               g_cfg.ch[CH_NET].threshold, g_cfg.ch[CH_MEM].threshold);
     log_line(line);
@@ -775,9 +847,10 @@ static void show_tray_menu(void)
    having it is to see the decision change while you drag. */
 static void slider_changed(int i)
 {
-    g_cfg.ch[i].threshold = activity_from_slider(&g_cfg.ch[i],
-                                                 g_slider[i].pos);
-    g_activity.cfg.ch[i] = g_cfg.ch[i];
+    ChannelRule *r = (i == SL_WAIT) ? &g_cfg.wait : &g_cfg.ch[i];
+    r->threshold = activity_from_slider(r, g_slider[i].pos);
+    if (i == SL_WAIT) g_activity.cfg.wait = g_cfg.wait;
+    else              g_activity.cfg.ch[i] = g_cfg.ch[i];
     InvalidateRect(g_wnd, 0, FALSE);
 }
 
@@ -793,7 +866,7 @@ static void on_mouse_move(int x, int y)
         return;
     }
 
-    for (i = 0; i < CH_COUNT; i++) {
+    for (i = 0; i < SL_COUNT; i++) {
         int h = ui_slider_hit(&g_slider[i], x, y);
         if (h != g_slider[i].hot) { g_slider[i].hot = h; hot_changed = 1; }
     }
@@ -877,7 +950,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_LBUTTONDOWN: {
         int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
         int i;
-        for (i = 0; i < CH_COUNT; i++) {
+        for (i = 0; i < SL_COUNT; i++) {
             if (ui_slider_hit(&g_slider[i], x, y)) {
                 g_dragging = i;
                 SetCapture(h);
@@ -1062,9 +1135,9 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     activity_defaults(&g_cfg);
     settings_load(&g_cfg, &g_keep_display);
     log_thresholds();
-    for (i = 0; i < CH_COUNT; i++) {
-        g_slider[i].pos = activity_to_slider(&g_cfg.ch[i],
-                                             g_cfg.ch[i].threshold);
+    for (i = 0; i < SL_COUNT; i++) {
+        const ChannelRule *r = (i == SL_WAIT) ? &g_cfg.wait : &g_cfg.ch[i];
+        g_slider[i].pos = activity_to_slider(r, r->threshold);
         g_slider[i].hot = 0;
         g_slider[i].dragging = 0;
     }

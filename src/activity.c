@@ -29,7 +29,11 @@ void activity_defaults(ActivityConfig *cfg)
     cfg->ch[CH_MEM].multiple  = CFG_MEM_MULTIPLE;
     cfg->ch[CH_MEM].enabled   = 1;
 
-    cfg->grace_ms = CFG_GRACE_MS;
+    cfg->wait.threshold = CFG_GRACE_DEFAULT;
+    cfg->wait.lo        = CFG_GRACE_MIN;
+    cfg->wait.hi        = CFG_GRACE_MAX;
+    cfg->wait.multiple  = 1;
+    cfg->wait.enabled   = 1;
 }
 
 static void channel_reset(Channel *c)
@@ -226,7 +230,8 @@ ActivityState activity_update(Activity *a, const TrackerDelta *d, int conns)
         a->state = ACT_BUSY;
     } else {
         a->quiet_ms += d->d_wall_100ns / HUNDRED_NS_PER_MS;
-        a->state = (a->quiet_ms >= a->cfg.grace_ms) ? ACT_IDLE : ACT_GRACE;
+        a->state = (a->quiet_ms >= a->cfg.wait.threshold) ? ACT_IDLE
+                                                           : ACT_GRACE;
     }
 
     return a->state;

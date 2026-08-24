@@ -1,6 +1,6 @@
 # nosleep
 
-A 88 KB Windows program that keeps the machine awake while a chosen app is
+A 91 KB Windows program that keeps the machine awake while a chosen app is
 actually working — and lets it sleep again when the app goes quiet.
 
 Open it, pick the app you are waiting on, press **DON'T SLEEP**. It drops to
@@ -9,7 +9,7 @@ the tray and watches. When the work finishes, it lets go on its own.
 No installer, no dependencies, no background service. One file.
 
 ```
-nosleep.exe          88 KB, needs nothing but Windows itself
+nosleep.exe          91 KB, needs nothing but Windows itself
 nosleep.log          one line a second, so you can see why it decided what it did
 nosleep.ini          where you left the sliders
 ```
@@ -36,8 +36,10 @@ Four signals, judged separately, because they behave nothing alike.
 | **RAM** | page faults per second, with the working set shown beside it | anything churning memory |
 
 Each has a slider in the window, with the live reading printed underneath it,
-so the line the app has to cross is never abstract. The defaults are set from
-measurement (below); move them and they are remembered in `nosleep.ini`.
+so the line the app has to cross is never abstract. A fifth slider sets the
+**wait** -- how long everything must stay under bar before the lock is
+dropped -- which measurement says is the control that really decides the
+outcome. All five are remembered in `nosleep.ini`.
 
 All four are summed over **the whole process tree** — the app you picked and
 everything it has spawned. Chrome, VS Code, Cursor, Antigravity and every
@@ -156,11 +158,40 @@ the mark at every size on both a light and a dark background, which is how
 that was caught, and `tests/icon_roundtrip.c` builds the real `HICON` and has
 Windows draw it back, which catches a broken mask or unpremultiplied alpha.
 
-### Waiting before letting go
+### The wait is the control that matters
 
-The lock is held until **60 consecutive seconds** of quiet, plus the few
-seconds the five-second mean takes to fall. Real workloads pause — on I/O, on
-the network, between build stages. One quiet second is not the end of the job.
+The lock is held until **120 consecutive seconds** of quiet, and that number —
+not the four thresholds — is what actually tells work apart from an app just
+ticking over.
+
+That is not what you would guess, so here is the measurement. 300 seconds of a
+real working session against 180 seconds of the machine genuinely left alone:
+
+| channel | **idle** median | **working** median |
+|---|---|---|
+| CPU | **295** | 205 |
+| Disk | **2.28 MB/s** | 652 KB/s |
+| Net | **677 B/s** | 467 B/s |
+| RAM | **1234/s** | 699/s |
+
+**Idle reads higher than working on every single channel.** While the model is
+generating, the editor itself does almost nothing; while nobody is there at
+all, its file watcher and extension host hum along steadily. So no threshold
+separates the two — lower the bars enough to catch the work and an idle
+machine reads 99% busy and never sleeps.
+
+What does separate them is how long the quiet stretches run:
+
+| | longest quiet stretch |
+|---|---|
+| working | **74 s** |
+| idle | **161 s** |
+
+120 seconds sits between the two with 46 seconds of margin on one side and 41
+on the other. At 60 both sides fail.
+
+There is a **Wait** slider for it, from 30 seconds to 10 minutes. If your work
+pauses for longer than two minutes, drag it right.
 
 ## The log
 

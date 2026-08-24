@@ -50,7 +50,10 @@ typedef struct {
 
 typedef struct {
     ChannelRule ch[CH_COUNT];
-    unsigned int grace_ms;
+    /* How long everything must stay under bar before the lock is dropped.
+       Carried as a ChannelRule so it gets a slider like the rest; the
+       threshold field is the wait itself, in milliseconds. */
+    ChannelRule wait;
 } ActivityConfig;
 
 typedef struct {

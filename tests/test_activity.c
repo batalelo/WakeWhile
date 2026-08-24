@@ -301,6 +301,37 @@ static void test_sustained_cpu_is_work(void)
     check(a.why == CH_CPU, "and the reason given is the CPU");
 }
 
+/* The wait is the control that actually separates work from an app just
+   ticking over -- measurement showed the levels themselves do not -- so it
+   has to be adjustable, and adjusting it has to take effect. */
+static void test_the_wait_is_adjustable(void)
+{
+    Activity a;
+    ActivityConfig cfg;
+
+    activity_defaults(&cfg);
+    cfg.wait.threshold = 30000;          /* half a minute instead of two */
+    activity_init(&a, &cfg);
+
+    run(&a, 5, 1000, 0, 0, 0);
+    check(a.state == ACT_BUSY, "busy while working");
+
+    run(&a, 28, 0, 0, 0, 0);
+    check(a.state == ACT_GRACE, "still held just short of the shorter wait");
+
+    run(&a, 8, 0, 0, 0, 0);
+    check(a.state == ACT_IDLE, "and released once it passes");
+
+    /* And the other way: a longer wait keeps the lock well past the default. */
+    activity_defaults(&cfg);
+    cfg.wait.threshold = 300000;         /* five minutes */
+    activity_init(&a, &cfg);
+    run(&a, 5, 1000, 0, 0, 0);
+    run(&a, 200, 0, 0, 0, 0);
+    check(a.state == ACT_GRACE,
+          "a five-minute wait still holds after three quiet minutes");
+}
+
 static void test_grace_window(void)
 {
     Activity a;
@@ -310,11 +341,10 @@ static void test_grace_window(void)
     check(a.state == ACT_BUSY, "busy while working");
 
     /* Work stops. The short mean takes a few seconds to fall below the bar,
-       and only then does the grace window start running -- so the lock is
-       released a little over a minute after the last real work, not exactly
-       on it. */
-    run(&a, 60, 0, 0, 0, 0);
-    check(a.state == ACT_GRACE, "a minute after work stops it is still held");
+       and only then does the wait start running -- so the lock goes a little
+       after the two minutes, not exactly on them. */
+    run(&a, 118, 0, 0, 0, 0);
+    check(a.state == ACT_GRACE, "two minutes after work stops it is still held");
     check(activity_should_hold(a.state), "grace means hold");
 
     run(&a, 8, 0, 0, 0, 0);
@@ -530,6 +560,7 @@ int main(void)
     test_a_single_spike_is_not_work();
     test_sustained_cpu_is_work();
     test_grace_window();
+    test_the_wait_is_adjustable();
     test_pauses_inside_a_job_never_release();
     test_an_idle_ide_is_allowed_to_sleep();
     test_a_swinging_baseline_raises_the_bar();
