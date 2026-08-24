@@ -1080,8 +1080,8 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     /* Two sizes: the small one is the title bar and Alt+Tab, the big one is
        the taskbar and the task switcher. Drawn, not linked in, because TCC
        has no resource compiler. */
-    g_icon_small = icon_make(ICON_BRAND, GetSystemMetrics(SM_CXSMICON));
-    g_icon_big   = icon_make(ICON_BRAND, GetSystemMetrics(SM_CXICON));
+    g_icon_small = icon_make(ICON_BRAND, GetSystemMetrics(SM_CXSMICON), 1);
+    g_icon_big   = icon_make(ICON_BRAND, GetSystemMetrics(SM_CXICON), 1);
     if (g_icon_small)
         SendMessageW(g_wnd, WM_SETICON, ICON_SMALL, (LPARAM)g_icon_small);
     if (g_icon_big)

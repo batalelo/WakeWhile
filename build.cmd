@@ -35,7 +35,7 @@ rem Not shipped: a console harness for watching a real process tick by tick.
   build\kernel32ext.def >nul 2>&1
 
 echo.
-echo   [2/2] nosleep.exe
+echo   [2/3] nosleep.exe
 
 rem The .def files under build\ supply the handful of imports TinyCC's own
 rem kernel32.def is missing, plus shell32, advapi32 and one user32 symbol
@@ -54,6 +54,24 @@ if errorlevel 1 (
   exit /b 1
 )
 
+echo.
+echo   [3/3] icon
+
+rem TinyCC has no resource compiler, so the icon Explorer reads is written
+rem into the finished file afterwards, by the same renderer the program draws
+rem with. Windows will not let this happen while the file is running.
+"%TCC%" -Wall tools\seticon.c -o build\seticon.exe -lkernel32 -luser32 -lgdi32
+if errorlevel 1 (
+  echo   could not build seticon
+  exit /b 1
+)
+build\seticon.exe nosleep.exe
+if errorlevel 1 (
+  echo   the executable has no icon. Close nosleep.exe and build again.
+  exit /b 1
+)
+
+echo.
 for %%F in (nosleep.exe) do echo   nosleep.exe  %%~zF bytes
 echo.
 endlocal

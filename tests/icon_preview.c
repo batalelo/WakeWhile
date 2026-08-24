@@ -23,13 +23,14 @@ static void fill(int x0, int y0, int w, int h, int r, int g, int b)
         }
 }
 
-/* Composites the premultiplied mark over whatever is already there. */
-static void blit(int x0, int y0, int size, COLORREF colour)
+/* Composites the premultiplied mark over whatever is already there. The top
+   band shows the open eye, the bottom band the closed one. */
+static void blit(int x0, int y0, int size, COLORREF colour, int open)
 {
     static unsigned char px[256 * 256 * 4];
     int x, y;
 
-    icon_render(px, size, colour);
+    icon_render(px, size, colour, open);
 
     for (y = 0; y < size; y++) {
         for (x = 0; x < size; x++) {
@@ -90,22 +91,24 @@ int main(void)
 
     x = 16;
     for (i = 0; i < 5; i++) {
-        blit(x, 30 - sizes[i] / 2, sizes[i], ICON_BRAND);
-        blit(x, 130 - sizes[i] / 2, sizes[i], ICON_BRAND);
+        blit(x, 30 - sizes[i] / 2, sizes[i], ICON_BRAND, 1);
+        blit(x, 130 - sizes[i] / 2, sizes[i], ICON_BRAND, 0);
         x += sizes[i] + 18;
     }
 
-    /* And the three tray states, at the size the tray actually uses. */
+    /* The three tray states at the size the tray actually uses: open and
+       green while working, open and amber while still holding, closed and
+       grey once the lock is let go. */
     x += 20;
-    blit(x, 22, 16, RGB(0x2E, 0xA0, 0x43));  blit(x, 122, 16, RGB(0x2E, 0xA0, 0x43));
+    blit(x, 22, 16, RGB(0x2E, 0xA0, 0x43), 1);  blit(x, 122, 16, RGB(0x2E, 0xA0, 0x43), 1);
     x += 34;
-    blit(x, 22, 16, RGB(0xE0, 0x9B, 0x00));  blit(x, 122, 16, RGB(0xE0, 0x9B, 0x00));
+    blit(x, 22, 16, RGB(0xE0, 0x9B, 0x00), 1);  blit(x, 122, 16, RGB(0xE0, 0x9B, 0x00), 1);
     x += 34;
-    blit(x, 22, 16, RGB(0x8A, 0x8A, 0x8A));  blit(x, 122, 16, RGB(0x8A, 0x8A, 0x8A));
+    blit(x, 22, 16, RGB(0x8A, 0x8A, 0x8A), 0);  blit(x, 122, 16, RGB(0x8A, 0x8A, 0x8A), 0);
 
     /* One big one, to check the shape itself rather than its legibility. */
-    blit(SHEET_W - 100, 26, 80, ICON_BRAND);
-    blit(SHEET_W - 100, 116, 80, ICON_BRAND);
+    blit(SHEET_W - 100, 20, 80, ICON_BRAND, 1);
+    blit(SHEET_W - 100, 110, 80, ICON_BRAND, 0);
 
     if (!write_bmp("build/icon_preview.bmp")) {
         printf("could not write build/icon_preview.bmp\n");

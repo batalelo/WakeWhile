@@ -1,44 +1,47 @@
 #include "icon.h"
 
-/* A cup on a saucer.
+/* An eye.
 
-   The first attempt was a crescent moon with a bar through it, which is the
-   more literal reading of "no sleep". It fell apart at 16 px: the clear space
-   the bar needs cuts a crescent -- thin by definition -- into two floating
-   slivers. A cup is solid, has no thin parts, and is what this whole category
-   of program has looked like since Caffeine.
+   The outline is a lens: the overlap of two equal circles, one centred above
+   the middle and one below. That is what gives the almond its two sharp
+   corners for free, and inseting both circles by the stroke width hollows it
+   out with an even line all the way round.
+
+   For a lens A wide and B tall (half-measures), the circles need radius
+   (A*A + B*B) / (2*B), centred that radius minus B either side of the middle.
+   With A = 40 and B = 24 that comes to 45, centres at 50 +/- 21.
+
+   The closed eye is the upper arc of the same construction, dropped so it
+   sits on the middle line. It has to bulge upward: a lash line follows the
+   curve of the eyeball and so falls away at the outer corners. Curved the
+   other way it reads as a bowl.
 
    Geometry is in percent of the icon box, so one set of numbers serves every
    size Windows asks for. */
 
-#define CUP_TOP     22
-#define CUP_BOTTOM  64
-#define CUP_TL      18   /* top edge, left and right */
-#define CUP_TR      58
-#define CUP_BL      26   /* bottom edge, tapered in  */
-#define CUP_BR      50
+#define LENS_A      40   /* half width  */
+#define LENS_R      45
+#define LENS_OFF    21   /* circle centres, either side of the middle */
+#define STROKE       8
 
-#define HANDLE_CX   60
-#define HANDLE_CY   36
-#define HANDLE_OUT  17
-#define HANDLE_IN    9
+#define PUPIL_R     12
 
-#define SAUCER_TOP     71
-#define SAUCER_BOTTOM  81
-#define SAUCER_L       10
-#define SAUCER_R       72
+/* How deep the closed lid dips. It has to be much shallower than the open
+   eye: reusing that radius gives a dome that reads as an arch, not a lid.
+   From the half width and this sagitta the arc radius follows -- for a chord
+   2A wide and S deep, R = (A*A + S*S) / (2*S). */
+#define CLOSED_SAG   15
+#define CLOSED_EXTRA  2  /* a closed eye is one line, so give it more weight */
 
 typedef long long i64;
 
-/* The cup tapers, so its sides are lines rather than constants: this gives
-   the left or right edge at a given height. */
-static i64 lerp(i64 a, i64 b, i64 num, i64 den)
+static i64 dist2(i64 x, i64 y, i64 cx, i64 cy)
 {
-    if (den == 0) return a;
-    return a + ((b - a) * num) / den;
+    i64 dx = x - cx, dy = y - cy;
+    return dx * dx + dy * dy;
 }
 
-void icon_render(unsigned char *px, int size, COLORREF colour)
+void icon_render(unsigned char *px, int size, COLORREF colour, int open)
 {
     int x, y;
     int r = GetRValue(colour), g = GetGValue(colour), b = GetBValue(colour);
@@ -47,17 +50,29 @@ void icon_render(unsigned char *px, int size, COLORREF colour)
        small enough that every product stays well inside 64 bits. */
     i64 s8 = (i64)size * 8;
 
-    i64 ctop = s8 * CUP_TOP / 100,    cbot = s8 * CUP_BOTTOM / 100;
-    i64 ctl  = s8 * CUP_TL / 100,     ctr  = s8 * CUP_TR / 100;
-    i64 cbl  = s8 * CUP_BL / 100,     cbr  = s8 * CUP_BR / 100;
+    i64 mid  = s8 / 2;
+    i64 off  = s8 * LENS_OFF / 100;
+    i64 rad  = s8 * LENS_R / 100;
+    i64 half = s8 * LENS_A / 100;
 
-    i64 hcx  = s8 * HANDLE_CX / 100,  hcy  = s8 * HANDLE_CY / 100;
-    i64 hout = s8 * HANDLE_OUT / 100, hin  = s8 * HANDLE_IN / 100;
-    i64 hout2 = hout * hout, hin2 = hin * hin;
+    /* The stroke has to stay at least one whole pixel or the outline breaks
+       up into dashes at 16 px, which is where it matters most. */
+    i64 t = s8 * STROKE / 100;
+    if (t < 8) t = 8;
 
-    i64 stop = s8 * SAUCER_TOP / 100, sbot = s8 * SAUCER_BOTTOM / 100;
-    i64 sl   = s8 * SAUCER_L / 100,   sr   = s8 * SAUCER_R / 100;
-    i64 srad = (sbot - stop) / 2;
+    i64 top_cy = mid - off, bot_cy = mid + off;
+    i64 out2 = rad * rad;
+    i64 in2  = (rad - t) * (rad - t);
+
+    i64 pr2 = (s8 * PUPIL_R / 100) * (s8 * PUPIL_R / 100);
+
+    /* the closed lid: a shallow arc of its own, centred on the middle line */
+    i64 sag    = s8 * CLOSED_SAG / 100;
+    i64 crad   = (half * half + sag * sag) / (2 * sag);
+    i64 lid_cy = (mid - sag / 2) + crad;
+    i64 ct     = t + s8 * CLOSED_EXTRA / 100;
+    i64 cout2  = crad * crad;
+    i64 cin2   = (crad - ct) * (crad - ct);
 
     for (y = 0; y < size; y++) {
         for (x = 0; x < size; x++) {
@@ -70,31 +85,21 @@ void icon_render(unsigned char *px, int size, COLORREF colour)
                     i64 Y = (i64)y * 8 + sy * 2 + 1;
                     int lit = 0;
 
-                    /* the cup */
-                    if (Y >= ctop && Y <= cbot) {
-                        i64 l  = lerp(ctl, cbl, Y - ctop, cbot - ctop);
-                        i64 rr = lerp(ctr, cbr, Y - ctop, cbot - ctop);
-                        if (X >= l && X <= rr) lit = 1;
-                    }
+                    if (open) {
+                        i64 dt = dist2(X, Y, mid, top_cy);
+                        i64 db = dist2(X, Y, mid, bot_cy);
+                        int inside = dt <= out2 && db <= out2;
+                        int hollow = dt <= in2  && db <= in2;
 
-                    /* the handle: a ring, clipped to the side of the cup, so
-                       it reads as a loop rather than a blob stuck on */
-                    if (!lit && X >= ctr - s8 / 50) {
-                        i64 dx = X - hcx, dy = Y - hcy;
-                        i64 d2 = dx * dx + dy * dy;
-                        if (d2 <= hout2 && d2 >= hin2) lit = 1;
-                    }
-
-                    /* the saucer, with rounded ends */
-                    if (!lit && Y >= stop && Y <= sbot) {
-                        i64 l = sl + srad, rr = sr - srad;
-                        if (X >= l && X <= rr) lit = 1;
-                        else {
-                            i64 cx = (X < l) ? l : rr;
-                            i64 cy = (stop + sbot) / 2;
-                            i64 dx = X - cx, dy = Y - cy;
-                            if (dx * dx + dy * dy <= srad * srad) lit = 1;
-                        }
+                        if (inside && !hollow) lit = 1;              /* lid  */
+                        if (dist2(X, Y, mid, mid) <= pr2) lit = 1;   /* pupil */
+                    } else {
+                        i64 d = dist2(X, Y, mid, lid_cy);
+                        /* the upper half of the ring only, and no wider than
+                           the open eye so the two read as the same object */
+                        if (d <= cout2 && d >= cin2 &&
+                            Y <= lid_cy && X >= mid - half && X <= mid + half)
+                            lit = 1;
                     }
 
                     if (lit) cov++;
@@ -112,7 +117,7 @@ void icon_render(unsigned char *px, int size, COLORREF colour)
     }
 }
 
-HICON icon_make(COLORREF colour, int size)
+HICON icon_make(COLORREF colour, int size, int open)
 {
     static unsigned char zeros[256 * 256 / 8];
     BITMAPINFO bi;
@@ -142,7 +147,7 @@ HICON icon_make(COLORREF colour, int size)
     ReleaseDC(0, dc);
     if (!color || !px) { if (color) DeleteObject(color); return 0; }
 
-    icon_render(px, size, colour);
+    icon_render(px, size, colour, open);
 
     /* An all-zero mask means "take the colour bitmap as it is". The buffer
        must be supplied explicitly; CreateBitmap leaves it undefined. */

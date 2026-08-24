@@ -1,7 +1,7 @@
-/* Checks the real HICON path, not just the rasteriser: builds the icon the
-   way the tray does, then asks Windows to draw it back into a bitmap. If the
-   mask or the premultiplied alpha were wrong, this is where it would show up
-   as a black square instead of a cup.
+/* Checks the real HICON path, not just the rasteriser: builds the three
+   icons the way the tray does -- open and green, open and amber, closed and
+   grey -- then asks Windows to draw them back into a bitmap. A wrong mask or
+   unpremultiplied alpha shows up here as a black square.
 
    Writes build/icon_roundtrip.bmp. Not part of the shipped executable. */
 
@@ -61,7 +61,7 @@ int main(void)
         }
 
     for (i = 0; i < 3; i++) {
-        icons[i] = icon_make(colours[i], sz);
+        icons[i] = icon_make(colours[i], sz, i < 2);
         if (!icons[i]) { printf("icon_make returned null\n"); return 1; }
         /* Once at native size, once blown up, so both the shape and the
            pixel-level alpha are visible. */

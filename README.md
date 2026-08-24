@@ -1,6 +1,6 @@
 # nosleep
 
-A 60 KB Windows program that keeps the machine awake while a chosen app is
+A 88 KB Windows program that keeps the machine awake while a chosen app is
 actually working — and lets it sleep again when the app goes quiet.
 
 Open it, pick the app you are waiting on, press **DON'T SLEEP**. It drops to
@@ -9,7 +9,7 @@ the tray and watches. When the work finishes, it lets go on its own.
 No installer, no dependencies, no background service. One file.
 
 ```
-nosleep.exe          60 KB, needs nothing but Windows itself
+nosleep.exe          88 KB, needs nothing but Windows itself
 nosleep.log          one line a second, so you can see why it decided what it did
 nosleep.ini          where you left the sliders
 ```
@@ -120,22 +120,41 @@ drag the Net slider left.
 
 ### The icon
 
-TinyCC has no resource compiler, so there is no `.ico` to embed. The mark is
-rasterised at run time instead -- integer arithmetic, 4x4 coverage sampling,
-geometry in percent of the box -- which means one set of numbers serves the
-16 px title bar, the 32 px taskbar and anything a high-DPI screen asks for,
-with no second asset and nothing beside the executable.
+An eye, open while the lock is held and closed once it is let go — so the
+state is readable at a glance, and readable in greyscale. Colour then says
+which kind of holding it is: green working, amber quiet but not yet released.
 
-The tray uses the same cup, tinted by what the rule currently thinks: green
-holding, amber inside the grace window, grey released. Shape for recognition,
-colour for status.
+| where | what you see |
+|---|---|
+| the file in Explorer, the title bar, the taskbar | open eye, blue |
+| tray, working | open eye, green |
+| tray, quiet but still holding | open eye, amber |
+| tray, released | **closed eye**, grey |
 
-The first attempt was a crescent moon with a bar through it. It fell apart at
-16 px -- the clear space a prohibition bar needs cuts a crescent, thin by
-definition, into two floating slivers. `tests/icon_preview.c` renders the mark
-at every size on both a light and a dark background, and
-`tests/icon_roundtrip.c` builds the real `HICON` and has Windows draw it back,
-which is what catches a broken mask or the wrong alpha.
+TinyCC has no resource compiler, so nothing can be linked in. The mark is
+rasterised at run time instead — integer arithmetic, 4x4 coverage sampling,
+geometry in percent of the box — so one set of numbers serves the 16 px title
+bar, the 32 px taskbar and whatever a high-DPI screen asks for.
+
+For the file itself, `tools/seticon.c` writes a real icon resource into the
+finished executable using `BeginUpdateResource`, which is the API Windows
+provides for exactly this and handles the PE surgery. It draws with the same
+`src/icon.c`, so the file and the window cannot drift apart.
+
+It stores 16, 20, 24, 32, 40 and 48 px, and no more. Icon resources hold raw
+32-bit pixels — the compressed form the format allows would mean writing a
+DEFLATE encoder — so a 256 px entry costs 262 KB on its own and 128 px another
+66 KB. Storing every size took the program from 62 KB to 444 KB, which is a
+poor trade for a view most people never open. What is stored covers 100, 125,
+150 and 200 percent scaling exactly, for 26 KB; Explorer's larger views scale
+up from 48, and 96 is a clean doubling of it.
+
+The first attempt at the mark was a crescent moon with a bar through it. It
+fell apart at 16 px — the clear space a prohibition bar needs cuts a crescent,
+thin by definition, into two floating slivers. `tests/icon_preview.c` renders
+the mark at every size on both a light and a dark background, which is how
+that was caught, and `tests/icon_roundtrip.c` builds the real `HICON` and has
+Windows draw it back, which catches a broken mask or unpremultiplied alpha.
 
 ### Waiting before letting go
 
@@ -229,7 +248,8 @@ actually does when you think it is idle.
 | `src/logfile.c` | the log |
 | `src/ui.c` | drawing primitives and the list control |
 | `src/theme.c` | the light and dark palettes |
-| `src/icon.c`, `src/tray.c` | the cup, rasterised at run time, and the tray |
+| `src/icon.c`, `src/tray.c` | the eye, rasterised at run time, and the tray |
+| `tools/seticon.c` | writes the icon resource into the finished exe |
 | `src/app.c` | the window and the once-a-second tick |
 | `src/settings.c` | the `.ini` beside the executable |
 | `tests/test_activity.c` | 85 headless checks over the two pure modules |

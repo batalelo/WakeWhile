@@ -18,14 +18,16 @@ static void wcopy(WCHAR *dst, const WCHAR *src, int cap)
     dst[i] = 0;
 }
 
-/* The tray shows the same cup as the taskbar, tinted by what the rule
-   currently thinks: green holding, amber in the grace window, grey released.
-   Shape for recognition, colour for status. */
-static HICON icon_make_tray(COLORREF c)
+/* The tray shows the same eye as the taskbar. It is open for as long as the
+   lock is held and closed once it is dropped, so the state is readable at a
+   glance even in greyscale; the colour then says which kind of holding it is
+   -- green working, amber quiet but not yet released. */
+static HICON icon_make_tray(TrayState s, COLORREF c)
 {
     int sz = GetSystemMetrics(SM_CXSMICON);
     if (sz < 16) sz = 16;
-    return icon_make(c, sz);
+    /* Open while the lock is held, closed once it is let go. */
+    return icon_make(c, sz, s != TRAY_OFF);
 }
 
 static COLORREF state_colour(TrayState s)
@@ -54,7 +56,7 @@ void tray_init(HWND owner, UINT callback_msg)
 {
     g_owner = owner;
     g_msg = callback_msg;
-    g_icon = icon_make_tray(state_colour(TRAY_OFF));
+    g_icon = icon_make_tray(TRAY_OFF, state_colour(TRAY_OFF));
     g_added = 0;
 }
 
@@ -90,7 +92,7 @@ void tray_set(TrayState state, const WCHAR *tip)
     NOTIFYICONDATAW nid;
 
     if (state != g_state || !g_icon) {
-        HICON fresh = icon_make_tray(state_colour(state));
+        HICON fresh = icon_make_tray(state, state_colour(state));
         if (fresh) {
             HICON old = g_icon;
             g_icon = fresh;
