@@ -60,17 +60,7 @@ runtime, no service, no administrator rights.
 
 ## Install
 
-### With winget
-
-```
-winget install WakeWhile
-```
-
-> Pending: the manifest is in review at
-> [microsoft/winget-pkgs#423169](https://github.com/microsoft/winget-pkgs/pull/423169).
-> Until that is merged, use the download below.
-
-### Or just download it
+### Download it
 
 There is no installer. Take `WakeWhile.exe` from
 [Releases](../../releases/latest) and run it. Put it anywhere you like.
@@ -82,6 +72,16 @@ produced it:
 ```
 certutil -hashfile WakeWhile.exe SHA256
 ```
+
+### Or with winget
+
+```
+winget install WakeWhile
+```
+
+> Not live yet — the manifest is in review at
+> [microsoft/winget-pkgs#423169](https://github.com/microsoft/winget-pkgs/pull/423169).
+> Use the download above until it merges.
 
 ### Uninstalling
 
