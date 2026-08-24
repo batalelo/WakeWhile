@@ -1,0 +1,13 @@
+# The source is LF in the repository and checked out however the platform
+# prefers. Without this, Windows contributors commit CRLF and every file looks
+# rewritten in the next diff.
+* text=auto eol=lf
+
+# Windows-only scripts that Windows itself runs: keep CRLF on disk.
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Never touched.
+*.png binary
+*.exe binary
+*.bmp binary
