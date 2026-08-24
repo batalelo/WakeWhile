@@ -85,6 +85,12 @@ static AppEntry  g_apps[CFG_MAX_APPS];
 static int       g_app_count;
 
 static Mode      g_mode = MODE_PICK;
+
+/* The sampler runs as soon as an app is picked, not only once the button is
+   pressed: the numbers under the sliders are the whole reason to have them,
+   and they are worth seeing before committing to anything. In pick mode it
+   only feeds the display -- the sleep lock is untouched. */
+static int       g_sampling;
 static Monitor   g_monitor;
 static Activity  g_activity;
 static ActivityConfig g_cfg;
@@ -211,6 +217,9 @@ static void place_sliders(void)
 
 /* -------------------------------------------------------------- app list */
 
+static void sample_app(unsigned int pid);
+static int  have_readings(void);
+
 static void refresh_apps(void)
 {
     unsigned int keep = 0;
@@ -230,6 +239,11 @@ static void refresh_apps(void)
             if (g_apps[i].pid == keep) { g_list_state.sel = i; break; }
         }
     }
+
+    /* Readings follow the selection, so they are there to look at before
+       anything is committed to. */
+    if (g_mode == MODE_PICK)
+        sample_app(g_list_state.sel >= 0 ? g_apps[g_list_state.sel].pid : 0);
 
     InvalidateRect(g_list, 0, FALSE);
     InvalidateRect(g_wnd, 0, FALSE);
@@ -472,7 +486,7 @@ static void paint_channels(HDC dc)
         RECT label, value, live;
         WCHAR text[80], now[40];
         const Channel *c = &g_activity.ch[i];
-        int active = (g_mode == MODE_WATCH);
+        int active = have_readings();
         COLORREF lc;
 
         label = rect_at(PAD, y, CH_LABEL_W, 20);
@@ -492,7 +506,8 @@ static void paint_channels(HDC dc)
         live = rect_at(PAD + CH_LABEL_W, y + ui_scale(18),
                        WIN_W - 2 * PAD - CH_LABEL_W, 16);
         if (!active) {
-            wcopy(text, L"not watching yet", 80);
+            wcopy(text, g_sampling ? L"measuring\x2026"
+                                   : L"pick an app to see its numbers", 80);
             lc = g_theme.text_dim;
         } else {
             fmt_channel(now, i, c->smoothed);
@@ -546,6 +561,12 @@ static void paint_channels(HDC dc)
             WCHAR sofar[24];
             fmt_wait(sofar, (unsigned int)g_activity.quiet_ms);
             wsprintfW(text, L"quiet for %s of %s", sofar, span);
+        } else if (have_readings()) {
+            /* Before the button is pressed the verdict is still worth
+               showing: it is what would happen if it were. */
+            wsprintfW(text, g_activity.why >= 0
+                          ? L"working right now \x00b7 this would hold the lock"
+                          : L"quiet right now \x00b7 nothing is over its limit");
         } else {
             wsprintfW(text, L"how long it must stay quiet before letting go");
         }
@@ -673,6 +694,39 @@ static void paint_window(HWND h)
     EndPaint(h, &ps);
 }
 
+/* ------------------------------------------------------------- sampling */
+
+/* Points the sampler at a process, or stops it when given nothing. Cheap to
+   call repeatedly: pointing it at what it is already watching does nothing,
+   which matters because the list refreshes whenever the window is activated. */
+static void sample_app(unsigned int pid)
+{
+    if (pid == 0) {
+        if (g_sampling) KillTimer(g_wnd, TIMER_TICK);
+        g_sampling = 0;
+        return;
+    }
+
+    if (g_sampling && g_monitor.alive && g_monitor.root_pid == pid) return;
+
+    if (!monitor_start(&g_monitor, pid)) {
+        if (g_sampling) KillTimer(g_wnd, TIMER_TICK);
+        g_sampling = 0;
+        return;
+    }
+
+    activity_init(&g_activity, &g_cfg);
+    g_sampling = 1;
+    SetTimer(g_wnd, TIMER_TICK, CFG_POLL_MS, 0);
+}
+
+/* True once a real rate has been measured. The first tick only establishes a
+   baseline, so there is a second or two with nothing worth showing. */
+static int have_readings(void)
+{
+    return g_sampling && g_activity.ch[CH_CPU].rlen > 0;
+}
+
 /* --------------------------------------------------------- mode switching */
 
 static void log_thresholds(void)
@@ -693,9 +747,11 @@ static void stop_watching(const WCHAR *why)
     g_mode = MODE_PICK;
     g_state = ACT_IDLE;
     g_watch_pid = 0;
-    KillTimer(g_wnd, TIMER_TICK);
     ui_list_set_enabled(g_list, 1);
     wcopy(g_notice, why ? why : L"", 128);
+    /* The sampler is left running: the app is still selected, and its
+       readings are as useful now as they were before the button was pressed.
+       refresh_apps points it wherever the selection ends up. */
     refresh_apps();
     InvalidateRect(g_wnd, 0, FALSE);
 }
@@ -707,13 +763,18 @@ static void start_watching(void)
     if (g_list_state.sel < 0 || g_list_state.sel >= g_app_count) return;
     a = &g_apps[g_list_state.sel];
 
-    if (!monitor_start(&g_monitor, a->pid)) {
-        wcopy(g_notice, L"that app closed before we could attach to it", 128);
-        refresh_apps();
-        return;
+    /* Usually already sampling this very process, in which case the rolling
+       windows it has built are kept -- the rule gets to start with history
+       rather than from nothing. */
+    if (!g_sampling || !g_monitor.alive || g_monitor.root_pid != a->pid) {
+        if (!monitor_start(&g_monitor, a->pid)) {
+            wcopy(g_notice, L"that app closed before we could attach to it", 128);
+            refresh_apps();
+            return;
+        }
+        activity_init(&g_activity, &g_cfg);
+        g_sampling = 1;
     }
-
-    activity_init(&g_activity, &g_cfg);
 
     wcopy(g_watch_title, a->title, 128);
     wcopy(g_watch_exe, a->exe, 64);
@@ -794,25 +855,36 @@ static void on_tick(void)
     int conns, held;
 
     if (!monitor_tick(&g_monitor, &d)) {
-        log_line("the watched process exited");
-        stop_watching(L"that app has closed \x00b7 the lock was released");
-        show_main_window();
+        if (g_mode == MODE_WATCH) {
+            log_line("the watched process exited");
+            stop_watching(L"that app has closed \x00b7 the lock was released");
+            show_main_window();
+        } else {
+            /* Only ever showing readings for it, so nothing to release. */
+            sample_app(0);
+            refresh_apps();
+        }
         return;
     }
 
     conns = netstat_established(g_monitor.pids, g_monitor.pid_count);
     g_state = activity_update(&g_activity, &d, conns);
-    held = activity_should_hold(g_state);
-    power_apply(held, g_keep_display);
-    update_tray();
 
-    log_tick(&d, conns, held);
-    if (g_state != before) {
-        char msg[96];
-        wsprintfA(msg, "  ^ state changed: %s -> %s",
-                  before == ACT_BUSY ? "BUSY" : before == ACT_GRACE ? "grace" : "IDLE",
-                  g_state == ACT_BUSY ? "BUSY" : g_state == ACT_GRACE ? "grace" : "IDLE");
-        log_line(msg);
+    /* Everything above happens either way. What follows is the part that
+       touches the machine, and it belongs to watching only. */
+    if (g_mode == MODE_WATCH) {
+        held = activity_should_hold(g_state);
+        power_apply(held, g_keep_display);
+        update_tray();
+
+        log_tick(&d, conns, held);
+        if (g_state != before) {
+            char msg[96];
+            wsprintfA(msg, "  ^ state changed: %s -> %s",
+                      before == ACT_BUSY ? "BUSY" : before == ACT_GRACE ? "grace" : "IDLE",
+                      g_state == ACT_BUSY ? "BUSY" : g_state == ACT_GRACE ? "grace" : "IDLE");
+            log_line(msg);
+        }
     }
 
     if (IsWindowVisible(g_wnd)) InvalidateRect(g_wnd, 0, FALSE);
@@ -991,8 +1063,16 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 
     case WM_COMMAND:
         if (LOWORD(wp) == ID_LIST) {
-            if (HIWORD(wp) == UILN_ACTIVATE) start_watching();
-            else InvalidateRect(h, 0, FALSE);   /* the button may light up */
+            if (HIWORD(wp) == UILN_ACTIVATE) {
+                start_watching();
+            } else {
+                /* Point the sampler at whatever was just picked, so the
+                   readings appear straight away rather than only once the
+                   button is pressed. */
+                sample_app(g_list_state.sel >= 0
+                               ? g_apps[g_list_state.sel].pid : 0);
+                InvalidateRect(h, 0, FALSE);    /* the button may light up */
+            }
             return 0;
         }
         switch (LOWORD(wp)) {
