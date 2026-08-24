@@ -14,3 +14,6 @@ WakeWhile.ini
 # Scratch from the test harnesses.
 build/*.bmp
 build/*.txt
+
+# Local notes, not part of the project.
+PUBLISH-STEPS.md
