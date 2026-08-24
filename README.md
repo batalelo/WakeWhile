@@ -62,7 +62,7 @@ runtime, no service, no administrator rights.
 
 ### Download it
 
-There is no installer. Take `WakeWhile.exe` from
+There is no installer. Just download `WakeWhile.exe` from
 [Releases](../../releases/latest) and run it. Put it anywhere you like.
 
 Every release is built by GitHub Actions from the tagged commit and publishes
