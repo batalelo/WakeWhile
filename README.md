@@ -12,7 +12,7 @@ lock by itself once the work finishes. No toggle to forget about.
 
 **90 KB · one file · no installer · no dependencies · no admin rights**
 
-[**Download**](../../releases/latest) · [What people use it for](#what-people-use-it-for) · [How it decides](#how-it-decides-whether-an-app-is-working) · [FAQ](#faq) · [Build from source](#building-from-source)
+[**Download**](../../releases/latest) · [Install](#install) · [What people use it for](#what-people-use-it-for) · [How it decides](#how-it-decides-whether-an-app-is-working) · [FAQ](#faq) · [Build from source](#building-from-source)
 
 [![build](https://github.com/batalelo/WakeWhile/actions/workflows/build.yml/badge.svg)](https://github.com/batalelo/WakeWhile/actions/workflows/build.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -60,7 +60,19 @@ runtime, no service, no administrator rights.
 
 ## Install
 
-There is no installer. Download `WakeWhile.exe` from
+### With winget
+
+```
+winget install WakeWhile
+```
+
+> Pending: the manifest is in review at
+> [microsoft/winget-pkgs#423169](https://github.com/microsoft/winget-pkgs/pull/423169).
+> Until that is merged, use the download below.
+
+### Or just download it
+
+There is no installer. Take `WakeWhile.exe` from
 [Releases](../../releases/latest) and run it. Put it anywhere you like.
 
 Every release is built by GitHub Actions from the tagged commit and publishes
@@ -71,9 +83,12 @@ produced it:
 certutil -hashfile WakeWhile.exe SHA256
 ```
 
-To remove it: delete the file. It writes two small files beside itself —
-`WakeWhile.log` and `WakeWhile.ini` — and touches nothing else. No registry
-keys, no `%APPDATA%`, no startup entries.
+### Uninstalling
+
+Delete the file. It writes two small files beside itself — `WakeWhile.log` and
+`WakeWhile.ini` — and touches nothing else. No registry keys, no `%APPDATA%`,
+no startup entries. If you installed it with winget, `winget uninstall
+WakeWhile` does the same.
 
 ---
 
