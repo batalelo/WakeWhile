@@ -68,6 +68,28 @@ static void begin(Activity *a)
     }
 }
 
+/* Same, with the limits pinned. Tests about how the rule behaves should say
+   what they are testing against rather than inherit whatever the shipped
+   defaults happen to be -- otherwise moving a default silently changes what
+   the test means. Pass 0 for any limit to leave it at its default. */
+static void begin_with(Activity *a, unsigned int cpu, u64 disk,
+                       unsigned int net, unsigned int mem, unsigned int wait)
+{
+    ActivityConfig cfg;
+    activity_defaults(&cfg);
+    if (wait) cfg.wait.threshold = wait;
+    if (cpu)  cfg.ch[CH_CPU].threshold  = cpu;
+    if (disk) cfg.ch[CH_DISK].threshold = (unsigned int)disk;
+    if (net)  cfg.ch[CH_NET].threshold  = net;
+    if (mem)  cfg.ch[CH_MEM].threshold  = mem;
+    activity_init(a, &cfg);
+    {
+        TrackerDelta zero = rates(0, 0, 0);
+        zero.d_wall_100ns = 0;
+        activity_update(a, &zero, 0);
+    }
+}
+
 static ActivityState run(Activity *a, int seconds, unsigned int cpu,
                          u64 rw, u64 other, int conns)
 {
@@ -281,7 +303,7 @@ static void test_a_single_spike_is_not_work(void)
     Activity a;
     TrackerDelta d;
 
-    begin(&a);
+    begin_with(&a, 500, 0, 0, 0, 0);
     run(&a, 20, 50, 0, 0, 0);          /* quiet */
     d = rates(1200, 0, 0);             /* one wild second */
     activity_update(&a, &d, 0);
@@ -335,8 +357,18 @@ static void test_the_wait_is_adjustable(void)
 static void test_grace_window(void)
 {
     Activity a;
+    ActivityConfig cfg;
 
-    begin(&a);
+    /* Pinned rather than left on the default: this test is about the window
+       running out, not about whatever the default happens to be this week. */
+    activity_defaults(&cfg);
+    cfg.wait.threshold = 120000;
+    activity_init(&a, &cfg);
+    {
+        TrackerDelta zero = rates(0, 0, 0);
+        zero.d_wall_100ns = 0;
+        activity_update(&a, &zero, 0);
+    }
     run(&a, 5, 1000, 0, 0, 0);
     check(a.state == ACT_BUSY, "busy while working");
 
@@ -383,7 +415,10 @@ static void test_an_idle_ide_is_allowed_to_sleep(void)
         139, 216, 200, 416, 290, 152, 630, 216, 247, 108, 486, 92
     };
 
-    begin(&a);
+    /* Limits pinned above what this app does, which is the arrangement the
+       test is about. The shipped defaults are deliberately tighter than this
+       -- see test_the_shipped_limits_are_deliberately_tight. */
+    begin_with(&a, 800, 4194304, 0, 0, 120000);
     for (i = 0; i < 200; i++) {
         TrackerDelta d = rates(cpu_trace[i % 12],
                                2300000 + (i % 7) * 9000,   /* ~2.3 MB/s */
@@ -395,9 +430,38 @@ static void test_an_idle_ide_is_allowed_to_sleep(void)
           "an idle IDE reaches idle despite 2 MB/s of internal piping");
     check(!a.ch[CH_DISK].learned_used,
           "its piping never lets up, so no baseline can be learned from it");
-    check_eq(a.ch[CH_DISK].bar, CFG_DISK_DEFAULT,
+    check_eq(a.ch[CH_DISK].bar, 4194304,
              "and the slider value is what it is judged against");
     check(a.ch[CH_DISK].smoothed < a.ch[CH_DISK].bar, "and its piping stayed under the bar");
+}
+
+/* What the shipped limits actually do, stated out loud so that moving them
+   is a visible decision rather than an accident.
+
+   They are set tight on purpose: catching real work matters more here than
+   letting a noisy editor go to sleep. The consequence is that an IDE which
+   pipes a couple of megabytes a second to itself while nobody is touching it
+   reads as busy and holds the lock. Anyone who wants that machine to sleep
+   moves the Disk slider right, which is what it is for. */
+static void test_the_shipped_limits_are_deliberately_tight(void)
+{
+    Activity a;
+    int i;
+
+    begin(&a);
+    for (i = 0; i < 30; i++) {
+        /* An idle VS Code, measured: 295 permille of a core and 2.28 MB/s of
+           its own internal piping. */
+        TrackerDelta d = rates(295, 2280000, 680);
+        activity_update(&a, &d, 4);
+    }
+
+    check(a.state == ACT_BUSY,
+          "at the shipped limits an idle-but-noisy IDE still reads as busy");
+    check(a.why == CH_CPU || a.why == CH_DISK,
+          "on CPU or disk, not on anything subtle");
+    check(a.ch[CH_MEM].smoothed < a.ch[CH_MEM].bar,
+          "memory stays well under its limit either way");
 }
 
 /* An app whose noise genuinely swings gets its bar lifted, so that its own
@@ -428,7 +492,10 @@ static void test_network_bursts_inside_a_noisy_ide_hold_the_lock(void)
     Activity a;
     int cycle, i;
 
-    begin(&a);
+    /* CPU and disk pinned above what this IDE does when it is not being
+       used, so that the only thing left that can hold the lock is the
+       network -- which is the whole point of the test. */
+    begin_with(&a, 800, 4194304, 0, 0, 0);
     /* Settle, so the baseline is learned from genuinely quiet seconds. */
     for (i = 0; i < 40; i++) {
         TrackerDelta d = rates(200, 2050000, 680);
@@ -563,6 +630,7 @@ int main(void)
     test_the_wait_is_adjustable();
     test_pauses_inside_a_job_never_release();
     test_an_idle_ide_is_allowed_to_sleep();
+    test_the_shipped_limits_are_deliberately_tight();
     test_a_swinging_baseline_raises_the_bar();
     test_network_bursts_inside_a_noisy_ide_hold_the_lock();
     test_network_needs_a_connection();

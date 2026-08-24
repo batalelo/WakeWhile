@@ -28,20 +28,25 @@
 
      bar = max( slider , this app's recent quiet level x multiple )
 
-   Defaults come from measurement -- see the spec. They sit above what an idle
-   Electron IDE does and below anything that counts as work. */
+   The defaults are set to catch real work rather than to let a noisy editor
+   sleep, which is a deliberate choice between two things that cannot both be
+   had -- see the note above the wait, below. The consequence is that an IDE
+   piping a couple of megabytes a second to itself while nobody touches it
+   will hold the lock. Moving the Disk slider right is the answer to that. */
 
 /* CPU, in permille of ONE core: 1000 = one core pegged. Machine-independent
-   by construction, unlike the figure a task manager shows.
-   Idle VS Code wanders up to 630 on a single sample, about 330 smoothed. */
-#define CFG_CPU_DEFAULT        500u
+   by construction, unlike the figure a task manager shows, which divides by
+   the number of logical processors. 200 is a fifth of one core. */
+#define CFG_CPU_DEFAULT        200u
 #define CFG_CPU_MIN            50u
 #define CFG_CPU_MAX            4000u
 #define CFG_CPU_MULTIPLE       3u
 
 /* ReadFile and WriteFile. Named pipes land here too, which is why an idle
-   Electron IDE can read megabytes a second: its windows talk this way. */
-#define CFG_DISK_DEFAULT       4194304u   /* 4 MB/s   */
+   Electron IDE can read megabytes a second: its windows talk to each other
+   this way, and Windows counts it as ordinary file I/O. At 1 MB/s such an
+   editor stays over the line even when idle. */
+#define CFG_DISK_DEFAULT       1048576u   /* 1 MB/s   */
 #define CFG_DISK_MIN           65536u     /* 64 KB/s  */
 #define CFG_DISK_MAX           268435456u /* 256 MB/s */
 #define CFG_DISK_MULTIPLE      2u
@@ -50,13 +55,10 @@
    network byte count, but socket traffic goes through DeviceIoControl and so
    lands in the "other" counter -- measured, a 358 KB/s download showed up as
    331 KB/s of "other" with read and write both flat at zero.
-   Idle VS Code chatters at 1-5.5 KB/s: sync, telemetry, extension polling,
-   and a real Claude Code session runs at a median of 1 KB/s with peaks to
-   11 KB/s -- the two populations overlap almost completely. What separates
-   them is not the level but how long the gaps are. Measured over 240 s of a
-   real session, the longest stretch with everything under bar was 37 s at
-   this threshold; over idle VS Code it was 234 s. Raising it to 4 KB/s turns
-   the session gap into 73 s and the machine sleeps mid-task. */
+   An idle editor chatters at 1-5.5 KB/s on sync, telemetry and extension
+   polling, and a real AI session runs at a median of 1 KB/s with peaks to
+   11 KB/s -- so the two overlap almost completely and this bar is set low
+   enough to catch the quieter of them. */
 #define CFG_NET_DEFAULT        2048u      /* 2 KB/s */
 #define CFG_NET_MIN            512u
 #define CFG_NET_MAX            4194304u   /* 4 MB/s  */
@@ -66,7 +68,7 @@
    about activity -- an app holding 2 GB and doing nothing is still doing
    nothing -- but a process that is really working touches new pages
    constantly. */
-#define CFG_MEM_DEFAULT        20000u     /* faults/s */
+#define CFG_MEM_DEFAULT        3000u      /* faults/s */
 #define CFG_MEM_MIN            500u
 #define CFG_MEM_MAX            2000000u
 #define CFG_MEM_MULTIPLE       3u
@@ -89,11 +91,15 @@
        working   longest quiet gap   74 s
        idle      longest quiet gap  161 s
 
-   So the wait is set between the two. At 120 s work keeps the lock with 46 s
-   to spare and an idle machine still gets to sleep with 41 s to spare. */
-#define CFG_GRACE_DEFAULT     120000u   /* 2 minutes */
+   With the tight limits above, an idle editor sits over the line more or
+   less continuously, so on that machine the wait rarely gets to run out at
+   all. That is the trade the defaults take: never dropping the lock during
+   work, at the cost of a noisy editor keeping the machine up. The sliders
+   exist because the right side of that trade is not the same for everyone --
+   move Disk and CPU right, or Wait left, to get the other one. */
+#define CFG_GRACE_DEFAULT     600000u   /* 10 minutes */
 #define CFG_GRACE_MIN          30000u
-#define CFG_GRACE_MAX         600000u
+#define CFG_GRACE_MAX        1800000u   /* 30 minutes, so the default is not pinned to the end */
 
 /* ------------------------------------------------------------------ limits */
 
