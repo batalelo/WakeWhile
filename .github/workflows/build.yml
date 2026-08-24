@@ -1,0 +1,41 @@
+name: build
+
+# Every push and every pull request: fetch the compiler, run the tests, build
+# the executable. Roughly fifteen seconds, and it proves the claim in the
+# README that a clean clone builds with nothing installed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch TinyCC
+        shell: pwsh
+        run: ./tools/get-tcc.ps1
+
+      - name: Build and test
+        shell: cmd
+        run: build.cmd
+
+      - name: Report size and hash
+        shell: pwsh
+        run: |
+          $f = Get-Item WakeWhile.exe
+          $h = (Get-FileHash WakeWhile.exe -Algorithm SHA256).Hash.ToLower()
+          "size    : $($f.Length) bytes"
+          "sha-256 : $h"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WakeWhile-windows-x64
+          path: WakeWhile.exe
+          if-no-files-found: error

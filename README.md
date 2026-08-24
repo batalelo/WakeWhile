@@ -12,10 +12,14 @@ lock by itself once the work finishes. No toggle to forget about.
 
 **90 KB · one file · no installer · no dependencies · no admin rights**
 
-[Download](../../releases) · [How it decides](#how-it-decides-whether-an-app-is-working) · [FAQ](#faq) · [Build from source](#building-from-source)
+[**Download**](../../releases/latest) · [What people use it for](#what-people-use-it-for) · [How it decides](#how-it-decides-whether-an-app-is-working) · [FAQ](#faq) · [Build from source](#building-from-source)
 
-<img src="docs/images/wakewhile-live-readings.png" width="420"
-     alt="WakeWhile watching Visual Studio Code, showing live CPU, disk, network and memory readings against each threshold, with the lock held because the app is working">
+[![build](https://github.com/batalelo/WakeWhile/actions/workflows/build.yml/badge.svg)](https://github.com/batalelo/WakeWhile/actions/workflows/build.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![platform](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
+
+<img src="docs/images/wakewhile-keep-windows-awake.png" width="427"
+     alt="WakeWhile on Windows 11, showing the picker listing open applications and the CPU, disk, network, memory and wait sliders that decide when to keep the PC awake">
 
 </div>
 
@@ -45,7 +49,7 @@ The tray icon is an eye: **open** while the lock is held, **closed** once it is
 let go.
 
 <div align="center">
-<img src="docs/images/wakewhile-tray-states.png" width="260"
+<img src="docs/images/wakewhile-tray-states.png" width="640"
      alt="WakeWhile system tray eye icon in three states: green open eye while working, amber open eye while quiet but still holding, grey closed eye once released">
 </div>
 
@@ -57,7 +61,15 @@ runtime, no service, no administrator rights.
 ## Install
 
 There is no installer. Download `WakeWhile.exe` from
-[Releases](../../releases) and run it. Put it anywhere you like.
+[Releases](../../releases/latest) and run it. Put it anywhere you like.
+
+Every release is built by GitHub Actions from the tagged commit and publishes
+its SHA-256, so the binary you download can be checked against the source that
+produced it:
+
+```
+certutil -hashfile WakeWhile.exe SHA256
+```
 
 To remove it: delete the file. It writes two small files beside itself —
 `WakeWhile.log` and `WakeWhile.ini` — and touches nothing else. No registry
@@ -88,12 +100,78 @@ Any one signal crossing its limit counts as working. Each limit is a slider,
 with the app's live reading printed directly underneath it — and the readings
 start the moment you select an app, before you commit to anything.
 
-<div align="center">
-<img src="docs/images/wakewhile-app-picker.png" width="420"
-     alt="WakeWhile app picker listing the currently open Windows applications you can keep the PC awake for, with adjustable CPU, disk, network, memory and wait sliders below">
-</div>
+## What people use it for
 
-### Defaults
+WakeWhile does not know or care what an app is. It watches four numbers, so it
+works with anything that keeps a window open while it works. These are the
+cases people run into most, and roughly which signal carries each one.
+
+### AI agents and assistants
+
+The case this was built for. An agent run is mostly *waiting on the network* —
+almost no CPU, long quiet gaps between bursts — which is exactly when a machine
+decides to sleep. Pick the editor or terminal the agent runs in and it is
+covered, because the whole process tree is watched.
+
+**Claude Code · Antigravity · Cursor · GitHub Copilot · Windsurf · Cline ·
+Aider · Continue · Roo Code · Zed · Ollama · LM Studio · ComfyUI ·
+Automatic1111 / Stable Diffusion WebUI**
+
+Mostly **network** and **CPU**. If your agent pauses for longer than the wait,
+drag the **Wait** slider right.
+
+### Rendering, editing and encoding
+
+A render pegs cores for hours and the machine has no business sleeping through
+it — but it also has no business staying up all night once the render is done.
+
+**Blender · DaVinci Resolve · Adobe Premiere Pro · After Effects · Media
+Encoder · HandBrake · Cinema 4D · Autodesk Maya · 3ds Max · Unreal Engine ·
+Unity · OBS Studio · Topaz Video AI · VirtualDub · FFmpeg**
+
+Mostly **CPU** and **disk**. The defaults already catch these comfortably.
+
+### Builds, compiles and long test runs
+
+**Visual Studio · Visual Studio Code · IntelliJ IDEA · Android Studio ·
+Rider · CLion · PyCharm · Docker Desktop · WSL · Gradle · Maven · npm ·
+Cargo · CMake · MSBuild**
+
+Mostly **CPU** and **disk**. WakeWhile follows child processes, so a compiler
+spawned by your editor counts even while the editor window sits idle.
+
+### Downloads, uploads, backups and transfers
+
+Bytes moving is work, even when the CPU is asleep. This is why there is a
+network channel at all.
+
+**qBittorrent · JDownloader · Internet Download Manager · Steam · Epic Games
+Launcher · Battle.net · rclone · FileZilla · WinSCP · Google Drive · Dropbox ·
+OneDrive · Backblaze · Veeam · Macrium Reflect · Acronis · Robocopy · 7-Zip ·
+WinRAR**
+
+Mostly **network** and **disk**.
+
+### Long-running computation
+
+**MATLAB · R and RStudio · Jupyter · Anaconda · SPSS · ANSYS · SolidWorks ·
+AutoCAD · QGIS · BOINC · Folding@home**
+
+Mostly **CPU** and **memory**.
+
+### Media servers and scanning
+
+**Plex · Emby · Jellyfin · Malwarebytes · Windows Defender full scans ·
+Everything indexing**
+
+Mostly **disk**.
+
+If the app you are waiting on is not on this list, it still works — the list is
+not a whitelist, it is just what people ask about.
+
+---
+
+## The defaults, and the trade they take
 
 | | Default | Range |
 |---|---|---|
@@ -324,7 +402,7 @@ using `BeginUpdateResource`.
 
 ## Author
 
-Built by **batalelo** — [TakeYourSite.com](https://www.TakeYourSite.com)
+Built by **Abdallah Elbatal** — [TakeYourSite.com](https://www.TakeYourSite.com)
 
 Questions, bug reports and feature requests are welcome in
 [Issues](../../issues). For anything else: <Admin@TakeYourSite.com>
