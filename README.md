@@ -322,6 +322,16 @@ using `BeginUpdateResource`.
 
 ---
 
+## Author
+
+Built by **batalelo** — [TakeYourSite.com](https://www.TakeYourSite.com)
+
+Questions, bug reports and feature requests are welcome in
+[Issues](../../issues). For anything else: <Admin@TakeYourSite.com>
+
+If WakeWhile saved you a render, a build or an overnight upload, a star costs
+nothing and helps other people find it.
+
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). Use it, fork it, ship it.
