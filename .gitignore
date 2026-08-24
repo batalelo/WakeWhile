@@ -14,3 +14,5 @@ build/*.log
 build/trickle.ps1
 nosleep.ini
 build/ai_session.txt
+build/*.bmp
+build/*.png

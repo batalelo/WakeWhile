@@ -15,10 +15,16 @@ typedef enum {
 } TrayState;
 
 void tray_init(HWND owner, UINT callback_msg);
-void tray_add(void);
+
+/* Returns 0 if the shell refused the icon; the caller may want to say so. */
+int  tray_add(void);
 void tray_remove(void);
 void tray_set(TrayState state, const WCHAR *tip);
 void tray_shutdown(void);
+
+/* What the last Shell_NotifyIconW call reported, for the log. */
+unsigned int tray_last_error(void);
+unsigned int tray_struct_size(void);
 
 
 #endif

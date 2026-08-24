@@ -8,6 +8,7 @@
 #include "theme.h"
 #include "ui.h"
 #include "tray.h"
+#include "icon.h"
 #include "applist.h"
 #include "monitor.h"
 #include "activity.h"
@@ -85,6 +86,9 @@ static int       g_keep_display;
 static WCHAR     g_watch_title[128];
 static WCHAR     g_watch_exe[64];
 static unsigned int g_watch_pid;
+
+static HICON     g_icon_big;
+static HICON     g_icon_small;
 
 static HotItem   g_hot;
 static HotItem   g_pressed;
@@ -651,7 +655,13 @@ static void start_watching(void)
     power_apply(1, g_keep_display);
 
     ui_list_set_enabled(g_list, 0);
-    tray_add();
+    if (!tray_add()) {
+        char line[128];
+        wsprintfA(line, "  the shell refused the tray icon: error %u, "
+                        "struct %u bytes",
+                  tray_last_error(), tray_struct_size());
+        log_line(line);
+    }
     update_tray();
 
     {
@@ -961,6 +971,8 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         log_close();
         netstat_shutdown();
         tray_shutdown();
+        if (g_icon_small) DestroyIcon(g_icon_small);
+        if (g_icon_big) DestroyIcon(g_icon_big);
         ui_free_fonts();
         PostQuitMessage(0);
         return 0;
@@ -1064,6 +1076,17 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     if (!g_wnd) return 1;
 
     theme_apply_titlebar(g_wnd, g_theme.dark);
+
+    /* Two sizes: the small one is the title bar and Alt+Tab, the big one is
+       the taskbar and the task switcher. Drawn, not linked in, because TCC
+       has no resource compiler. */
+    g_icon_small = icon_make(ICON_BRAND, GetSystemMetrics(SM_CXSMICON));
+    g_icon_big   = icon_make(ICON_BRAND, GetSystemMetrics(SM_CXICON));
+    if (g_icon_small)
+        SendMessageW(g_wnd, WM_SETICON, ICON_SMALL, (LPARAM)g_icon_small);
+    if (g_icon_big)
+        SendMessageW(g_wnd, WM_SETICON, ICON_BIG, (LPARAM)g_icon_big);
+
     tray_init(g_wnd, MSG_TRAY);
     place_sliders();
 

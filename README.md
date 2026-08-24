@@ -39,7 +39,7 @@ Each has a slider in the window, with the live reading printed underneath it,
 so the line the app has to cross is never abstract. The defaults are set from
 measurement (below); move them and they are remembered in `nosleep.ini`.
 
-All three are summed over **the whole process tree** — the app you picked and
+All four are summed over **the whole process tree** — the app you picked and
 everything it has spawned. Chrome, VS Code, Cursor, Antigravity and every
 other Electron shell do their real work in child processes; the window you
 clicked belongs to a parent that sits near zero.
@@ -117,6 +117,25 @@ gaps under a minute:
 
 That leaves 23 seconds of margin. If your work pauses for longer than that,
 drag the Net slider left.
+
+### The icon
+
+TinyCC has no resource compiler, so there is no `.ico` to embed. The mark is
+rasterised at run time instead -- integer arithmetic, 4x4 coverage sampling,
+geometry in percent of the box -- which means one set of numbers serves the
+16 px title bar, the 32 px taskbar and anything a high-DPI screen asks for,
+with no second asset and nothing beside the executable.
+
+The tray uses the same cup, tinted by what the rule currently thinks: green
+holding, amber inside the grace window, grey released. Shape for recognition,
+colour for status.
+
+The first attempt was a crescent moon with a bar through it. It fell apart at
+16 px -- the clear space a prohibition bar needs cuts a crescent, thin by
+definition, into two floating slivers. `tests/icon_preview.c` renders the mark
+at every size on both a light and a dark background, and
+`tests/icon_roundtrip.c` builds the real `HICON` and has Windows draw it back,
+which is what catches a broken mask or the wrong alpha.
 
 ### Waiting before letting go
 
@@ -209,7 +228,8 @@ actually does when you think it is idle.
 | `src/power.c` | `SetThreadExecutionState` |
 | `src/logfile.c` | the log |
 | `src/ui.c` | drawing primitives and the list control |
-| `src/theme.c`, `src/tray.c` | palette, tray icon drawn at run time |
+| `src/theme.c` | the light and dark palettes |
+| `src/icon.c`, `src/tray.c` | the cup, rasterised at run time, and the tray |
 | `src/app.c` | the window and the once-a-second tick |
 | `src/settings.c` | the `.ini` beside the executable |
 | `tests/test_activity.c` | 85 headless checks over the two pure modules |

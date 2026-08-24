@@ -1,4 +1,5 @@
 #include "tray.h"
+#include "icon.h"
 
 #define TRAY_ID 1
 
@@ -7,6 +8,7 @@ static UINT  g_msg;
 static HICON g_icon;
 static int   g_added;
 static TrayState g_state = TRAY_OFF;
+static DWORD g_last_error;
 
 static void wcopy(WCHAR *dst, const WCHAR *src, int cap)
 {
@@ -16,80 +18,14 @@ static void wcopy(WCHAR *dst, const WCHAR *src, int cap)
     dst[i] = 0;
 }
 
-/* A filled circle with 4x4 coverage sampling, written straight into a
-   premultiplied BGRA DIB. All integer: no CRT, no float helpers. */
-static HICON make_dot(COLORREF c)
+/* The tray shows the same cup as the taskbar, tinted by what the rule
+   currently thinks: green holding, amber in the grace window, grey released.
+   Shape for recognition, colour for status. */
+static HICON icon_make_tray(COLORREF c)
 {
-    static unsigned char zeros[128 * 128 / 8];
-    BITMAPINFO bi;
-    ICONINFO ii;
-    HDC dc;
-    HBITMAP color, mask;
-    HICON icon;
-    unsigned char *px = 0;
-    int sz, x, y, cx8, r8, rr;
-    int r = GetRValue(c), g = GetGValue(c), b = GetBValue(c);
-
-    sz = GetSystemMetrics(SM_CXSMICON);
+    int sz = GetSystemMetrics(SM_CXSMICON);
     if (sz < 16) sz = 16;
-    if (sz > 128) sz = 128;
-
-    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bi.bmiHeader.biWidth = sz;
-    bi.bmiHeader.biHeight = -sz;          /* top-down */
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    bi.bmiHeader.biCompression = BI_RGB;
-    bi.bmiHeader.biSizeImage = 0;
-    bi.bmiHeader.biXPelsPerMeter = 0;
-    bi.bmiHeader.biYPelsPerMeter = 0;
-    bi.bmiHeader.biClrUsed = 0;
-    bi.bmiHeader.biClrImportant = 0;
-
-    dc = GetDC(0);
-    color = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, (void **)&px, 0, 0);
-    ReleaseDC(0, dc);
-    if (!color || !px) { if (color) DeleteObject(color); return 0; }
-
-    cx8 = sz * 4;                 /* centre, in eighths of a pixel */
-    r8  = (sz * 8 * 42) / 100;    /* radius: 42% of the icon box   */
-    rr  = r8 * r8;
-
-    for (y = 0; y < sz; y++) {
-        for (x = 0; x < sz; x++) {
-            int sx, sy, cov = 0, a;
-            unsigned char *p = px + (y * sz + x) * 4;
-            for (sy = 0; sy < 4; sy++) {
-                for (sx = 0; sx < 4; sx++) {
-                    int dx = (x * 8 + sx * 2 + 1) - cx8;
-                    int dy = (y * 8 + sy * 2 + 1) - cx8;
-                    if (dx * dx + dy * dy <= rr) cov++;
-                }
-            }
-            a = (cov * 255) / 16;
-            /* Premultiplied, which is what the shell expects of a 32-bit
-               icon with an alpha channel. */
-            p[0] = (unsigned char)((b * a) / 255);
-            p[1] = (unsigned char)((g * a) / 255);
-            p[2] = (unsigned char)((r * a) / 255);
-            p[3] = (unsigned char)a;
-        }
-    }
-
-    /* An all-zero mask means "take the colour bitmap as it is". The buffer
-       must be supplied explicitly; CreateBitmap leaves it undefined. */
-    mask = CreateBitmap(sz, sz, 1, 1, zeros);
-
-    ii.fIcon = TRUE;
-    ii.xHotspot = 0;
-    ii.yHotspot = 0;
-    ii.hbmMask = mask;
-    ii.hbmColor = color;
-    icon = CreateIconIndirect(&ii);
-
-    DeleteObject(color);
-    DeleteObject(mask);
-    return icon;
+    return icon_make(c, sz);
 }
 
 static COLORREF state_colour(TrayState s)
@@ -118,17 +54,27 @@ void tray_init(HWND owner, UINT callback_msg)
 {
     g_owner = owner;
     g_msg = callback_msg;
-    g_icon = make_dot(state_colour(TRAY_OFF));
+    g_icon = icon_make_tray(state_colour(TRAY_OFF));
     g_added = 0;
 }
 
-void tray_add(void)
+int tray_add(void)
 {
     NOTIFYICONDATAW nid;
-    if (g_added) return;
+    if (g_added) return 1;
     fill_nid(&nid, CFG_APP_NAME);
-    if (Shell_NotifyIconW(NIM_ADD, &nid)) g_added = 1;
+    SetLastError(0);
+    if (Shell_NotifyIconW(NIM_ADD, &nid)) {
+        g_added = 1;
+        g_last_error = 0;
+    } else {
+        g_last_error = GetLastError();
+    }
+    return g_added;
 }
+
+unsigned int tray_last_error(void) { return (unsigned int)g_last_error; }
+unsigned int tray_struct_size(void) { return (unsigned int)sizeof(NOTIFYICONDATAW); }
 
 void tray_remove(void)
 {
@@ -144,7 +90,7 @@ void tray_set(TrayState state, const WCHAR *tip)
     NOTIFYICONDATAW nid;
 
     if (state != g_state || !g_icon) {
-        HICON fresh = make_dot(state_colour(state));
+        HICON fresh = icon_make_tray(state_colour(state));
         if (fresh) {
             HICON old = g_icon;
             g_icon = fresh;
