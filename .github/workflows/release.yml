@@ -6,6 +6,10 @@ name: release
 # The binary people download is therefore built by GitHub from public source,
 # not uploaded by hand from someone's laptop -- which is the only version of
 # "you can verify this" that means anything for an unsigned executable.
+#
+# The notes live in .github/release-notes.md rather than inline. A PowerShell
+# here-string cannot survive a YAML block scalar: its closing "@ has to sit at
+# column 0, and a line at column 0 ends the block.
 
 on:
   push:
@@ -34,61 +38,32 @@ jobs:
         shell: cmd
         run: build.cmd
 
-      - name: Name the asset after the version
+      - name: Prepare the asset and its notes
         id: prep
         shell: pwsh
         run: |
-          $tag = if ($env:GITHUB_REF -like 'refs/tags/*') {
-            $env:GITHUB_REF -replace '^refs/tags/',''
-          } else {
-            '${{ github.event.inputs.tag }}'
-          }
+          $tag = '${{ github.event.inputs.tag }}'
+          if (-not $tag) { $tag = $env:GITHUB_REF -replace '^refs/tags/','' }
           $version = $tag -replace '^v',''
           $asset = "WakeWhile-$version-windows-x64.exe"
+
           Copy-Item WakeWhile.exe $asset
           $hash = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLower()
           $size = [Math]::Round((Get-Item $asset).Length / 1KB, 1)
-          "tag=$tag"       | Out-File -Append $env:GITHUB_OUTPUT
-          "asset=$asset"   | Out-File -Append $env:GITHUB_OUTPUT
-          "hash=$hash"     | Out-File -Append $env:GITHUB_OUTPUT
-          "size=$size"     | Out-File -Append $env:GITHUB_OUTPUT
+
+          $notes = Get-Content .github/release-notes.md -Raw
+          $notes = $notes.Replace('__ASSET__', $asset)
+          $notes = $notes.Replace('__SIZE__', $size)
+          $notes = $notes.Replace('__HASH__', $hash)
+          Set-Content notes.md $notes -Encoding utf8
+
+          "tag=$tag"     | Out-File -Append $env:GITHUB_OUTPUT
+          "asset=$asset" | Out-File -Append $env:GITHUB_OUTPUT
+          "size: $size KB, sha-256: $hash"
 
       - name: Publish
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $notes = @"
-WakeWhile holds Windows awake while an app you choose is genuinely busy, and
-releases the lock by itself once it goes quiet. No toggle to forget about.
-
-- Pick any open window; watches the whole process tree
-- Four signals: CPU (as a share of one core), disk, network, page faults
-- Adjustable limits with live readings, shown as soon as you select an app
-- Adjustable quiet period before release
-- Tray eye icon: open while the lock is held, closed once it is not
-- Per-second plain-text log, so ``why won't my PC sleep`` has an answer
-- Optional keep-screen-on, and follows the Windows light/dark theme
-
-**Requires Windows 10 or 11, 64-bit.** No installer, no dependencies, no
-administrator rights. Download the ``.exe`` below and run it.
-
-Built by GitHub Actions from this tag, so the binary matches the source.
-
-``````
-file    : ${{ steps.prep.outputs.asset }}
-size    : ${{ steps.prep.outputs.size }} KB
-sha-256 : ${{ steps.prep.outputs.hash }}
-``````
-
-Verify it before running:
-
-``````
-certutil -hashfile ${{ steps.prep.outputs.asset }} SHA256
-``````
-"@
-          $notes | Out-File -Encoding utf8 notes.md
-          gh release create "${{ steps.prep.outputs.tag }}" `
-            "${{ steps.prep.outputs.asset }}" `
-            --title "${{ steps.prep.outputs.tag }} - Keep Windows awake only while your app is working" `
-            --notes-file notes.md
+          gh release create "${{ steps.prep.outputs.tag }}" "${{ steps.prep.outputs.asset }}" --title "${{ steps.prep.outputs.tag }} - Keep Windows awake only while your app is working" --notes-file notes.md
