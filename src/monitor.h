@@ -1,5 +1,5 @@
-#ifndef NOSLEEP_MONITOR_H
-#define NOSLEEP_MONITOR_H
+#ifndef WAKEWHILE_MONITOR_H
+#define WAKEWHILE_MONITOR_H
 
 /* Samples a process and everything it has spawned, and feeds the result to
    the tracker. This is the only place that talks to the kernel about

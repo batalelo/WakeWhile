@@ -1,4 +1,4 @@
-/* nosleep -- keeps Windows awake while a chosen app is actually working.
+/* WakeWhile -- keeps Windows awake while a chosen app is actually working.
 
    This file owns the window, the once-a-second tick, and the wiring between
    the process sampler, the activity rule and the sleep lock. */
@@ -390,11 +390,11 @@ static void update_tray(void)
     wcopy(name, g_watch_exe[0] ? g_watch_exe : g_watch_title, 64);
 
     if (g_state == ACT_IDLE)
-        wsprintfW(tip, L"nosleep \x00b7 %s \x00b7 released", name);
+        wsprintfW(tip, L"WakeWhile \x00b7 %s \x00b7 released", name);
     else if (g_state == ACT_GRACE)
-        wsprintfW(tip, L"nosleep \x00b7 %s \x00b7 quiet, still holding", name);
+        wsprintfW(tip, L"WakeWhile \x00b7 %s \x00b7 quiet, still holding", name);
     else
-        wsprintfW(tip, L"nosleep \x00b7 %s \x00b7 %u%% of one core", name,
+        wsprintfW(tip, L"WakeWhile \x00b7 %s \x00b7 %u%% of one core", name,
                   cpu_percent());
 
     tray_set(tray_state_now(), tip);
@@ -735,7 +735,8 @@ static void log_thresholds(void)
     wsprintfA(line, "  thresholds: cpu %u permille | disk %u B/s | net %u B/s"
                     " | mem %u faults/s | wait %us",
               g_cfg.ch[CH_CPU].threshold, g_cfg.ch[CH_DISK].threshold,
-              g_cfg.ch[CH_NET].threshold, g_cfg.ch[CH_MEM].threshold);
+              g_cfg.ch[CH_NET].threshold, g_cfg.ch[CH_MEM].threshold,
+              g_cfg.wait.threshold / 1000);
     log_line(line);
 }
 
@@ -899,7 +900,7 @@ static void show_tray_menu(void)
 
     if (!menu) return;
 
-    AppendMenuW(menu, MF_STRING, MENU_SHOW, L"Show nosleep");
+    AppendMenuW(menu, MF_STRING, MENU_SHOW, L"Show WakeWhile");
     if (g_mode == MODE_WATCH)
         AppendMenuW(menu, MF_STRING, MENU_RELEASE, L"Release the lock");
     AppendMenuW(menu, MF_SEPARATOR, 0, 0);
@@ -1120,7 +1121,7 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_DESTROY:
         KillTimer(h, TIMER_TICK);
         power_release();
-        log_line("nosleep exited; lock released");
+        log_line("WakeWhile exited; lock released");
         log_close();
         netstat_shutdown();
         tray_shutdown();
@@ -1206,7 +1207,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     SetProcessDPIAware();
     log_open();
     log_line("--------------------------------------------------------");
-    log_line("nosleep started");
+    log_line("WakeWhile started");
     netstat_init();
     ui_init_metrics();
     compute_layout();

@@ -1,5 +1,5 @@
-#ifndef NOSLEEP_SETTINGS_H
-#define NOSLEEP_SETTINGS_H
+#ifndef WAKEWHILE_SETTINGS_H
+#define WAKEWHILE_SETTINGS_H
 
 /* Where the sliders were left, kept in a plain text file beside the
    executable so it can be read and edited by hand. */

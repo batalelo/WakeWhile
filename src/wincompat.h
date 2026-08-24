@@ -1,5 +1,5 @@
-#ifndef NOSLEEP_WINCOMPAT_H
-#define NOSLEEP_WINCOMPAT_H
+#ifndef WAKEWHILE_WINCOMPAT_H
+#define WAKEWHILE_WINCOMPAT_H
 
 /* TCC ships a trimmed set of Windows headers: no tlhelp32.h, no shellapi.h,
    no dwmapi.h, and a few constants that postdate them. Everything we need

@@ -1,5 +1,5 @@
-#ifndef NOSLEEP_THEME_H
-#define NOSLEEP_THEME_H
+#ifndef WAKEWHILE_THEME_H
+#define WAKEWHILE_THEME_H
 
 #include "wincompat.h"
 

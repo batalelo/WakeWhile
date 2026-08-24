@@ -1,5 +1,5 @@
-#ifndef NOSLEEP_UI_H
-#define NOSLEEP_UI_H
+#ifndef WAKEWHILE_UI_H
+#define WAKEWHILE_UI_H
 
 #include "wincompat.h"
 #include "theme.h"
@@ -39,7 +39,7 @@ void ui_text(HDC dc, const RECT *r, const WCHAR *s, HFONT f, COLORREF c,
 
 /* ---------------------------------------------------------------- list */
 
-#define UI_LIST_CLASS  L"NoSleepListView"
+#define UI_LIST_CLASS  L"WakeWhileListView"
 
 /* Notification codes delivered to the parent as WM_COMMAND. */
 #define UILN_SELCHANGE 1

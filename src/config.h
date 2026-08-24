@@ -1,5 +1,5 @@
-#ifndef NOSLEEP_CONFIG_H
-#define NOSLEEP_CONFIG_H
+#ifndef WAKEWHILE_CONFIG_H
+#define WAKEWHILE_CONFIG_H
 
 /* Tunables live here and nowhere else.
    Rationale, and the measurements behind the numbers, are in
@@ -107,10 +107,10 @@
 #define CFG_MAX_APPS           128        /* rows in the app list          */
 #define CFG_LOG_MAX_BYTES      4194304    /* 4 MB, then start over         */
 
-#define CFG_APP_NAME           L"nosleep"
-#define CFG_WND_CLASS          L"NoSleepGuiWindow"
-#define CFG_MUTEX_NAME         L"Local\\NoSleepGuiSingleInstance"
-#define CFG_LOG_NAME           L"nosleep.log"
-#define CFG_INI_NAME           L"nosleep.ini"
+#define CFG_APP_NAME           L"WakeWhile"
+#define CFG_WND_CLASS          L"WakeWhileWindow"
+#define CFG_MUTEX_NAME         L"Local\\WakeWhileSingleInstance"
+#define CFG_LOG_NAME           L"WakeWhile.log"
+#define CFG_INI_NAME           L"WakeWhile.ini"
 
 #endif

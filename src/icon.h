@@ -1,5 +1,5 @@
-#ifndef NOSLEEP_ICON_H
-#define NOSLEEP_ICON_H
+#ifndef WAKEWHILE_ICON_H
+#define WAKEWHILE_ICON_H
 
 #include "wincompat.h"
 

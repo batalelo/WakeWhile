@@ -1,10 +1,10 @@
-#ifndef NOSLEEP_LOGFILE_H
-#define NOSLEEP_LOGFILE_H
+#ifndef WAKEWHILE_LOGFILE_H
+#define WAKEWHILE_LOGFILE_H
 
 /* A plain text log written next to the executable, so that "why is my
    machine still awake" has an answer you can read rather than guess at.
 
-   Opened shared, so it can be tailed while nosleep is running. */
+   Opened shared, so it can be tailed while WakeWhile is running. */
 
 #include "wincompat.h"
 

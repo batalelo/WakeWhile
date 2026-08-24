@@ -1,5 +1,5 @@
-#ifndef NOSLEEP_APPLIST_H
-#define NOSLEEP_APPLIST_H
+#ifndef WAKEWHILE_APPLIST_H
+#define WAKEWHILE_APPLIST_H
 
 /* The apps the user currently has open -- the same set Alt+Tab shows. */
 

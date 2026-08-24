@@ -1,5 +1,5 @@
-#ifndef NOSLEEP_ACTIVITY_H
-#define NOSLEEP_ACTIVITY_H
+#ifndef WAKEWHILE_ACTIVITY_H
+#define WAKEWHILE_ACTIVITY_H
 
 /* Decides whether the watched app is working, and whether that is enough to
    keep holding the sleep lock.

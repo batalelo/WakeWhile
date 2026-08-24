@@ -1,5 +1,5 @@
-#ifndef NOSLEEP_POWER_H
-#define NOSLEEP_POWER_H
+#ifndef WAKEWHILE_POWER_H
+#define WAKEWHILE_POWER_H
 
 /* The sleep lock itself. Everything else in the program exists to decide when
    to call this. */

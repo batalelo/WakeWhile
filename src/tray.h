@@ -1,5 +1,5 @@
-#ifndef NOSLEEP_TRAY_H
-#define NOSLEEP_TRAY_H
+#ifndef WAKEWHILE_TRAY_H
+#define WAKEWHILE_TRAY_H
 
 #include "wincompat.h"
 #include "config.h"

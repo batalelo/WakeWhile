@@ -1,5 +1,5 @@
-#ifndef NOSLEEP_NETSTAT_H
-#define NOSLEEP_NETSTAT_H
+#ifndef WAKEWHILE_NETSTAT_H
+#define WAKEWHILE_NETSTAT_H
 
 /* How many established TCP connections to somewhere off this machine the
    watched process tree currently holds.

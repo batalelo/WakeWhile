@@ -106,7 +106,7 @@ void settings_save(const ActivityConfig *cfg, int keep_display)
     if (f == INVALID_HANDLE_VALUE) return;
 
     wsprintfA(buf,
-        "# nosleep settings. Delete this file to go back to the defaults.\r\n"
+        "# WakeWhile settings. Delete this file to go back to the defaults.\r\n"
         "# cpu is permille of one core, disk and net are bytes per second,\r\n"
         "# mem is page faults per second, wait is milliseconds.\r\n"
         "cpu=%u\r\n"

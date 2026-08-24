@@ -1,5 +1,5 @@
-#ifndef NOSLEEP_TRACKER_H
-#define NOSLEEP_TRACKER_H
+#ifndef WAKEWHILE_TRACKER_H
+#define WAKEWHILE_TRACKER_H
 
 /* Turns successive snapshots of a process tree into aggregate deltas.
 

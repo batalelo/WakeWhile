@@ -2,17 +2,15 @@
 tools/tcc/
 
 # Build outputs.
-nosleep.exe
+WakeWhile.exe
 build/*.exe
-build/*.png
 *.o
 *.obj
 
-# Diagnostic logs and traces from testing.
-nosleep.log
-build/*.log
-build/trickle.ps1
-nosleep.ini
-build/ai_session.txt
+# Written by the program beside itself at run time.
+WakeWhile.log
+WakeWhile.ini
+
+# Scratch from the test harnesses.
 build/*.bmp
-build/*.png
+build/*.txt

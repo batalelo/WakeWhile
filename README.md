@@ -1,289 +1,327 @@
-# nosleep
+<div align="center">
 
-A 91 KB Windows program that keeps the machine awake while a chosen app is
-actually working — and lets it sleep again when the app goes quiet.
+# WakeWhile
 
-Open it, pick the app you are waiting on, press **DON'T SLEEP**. It drops to
-the tray and watches. When the work finishes, it lets go on its own.
+**Keep Windows awake — but only while the app you pick is actually working.**
 
-No installer, no dependencies, no background service. One file.
+Stay awake while it's working. Sleep when it's not.
 
-```
-nosleep.exe          91 KB, needs nothing but Windows itself
-nosleep.log          one line a second, so you can see why it decided what it did
-nosleep.ini          where you left the sliders
-```
+A free, open-source Windows utility that prevents your PC from sleeping during
+a render, a build, a large upload or an AI agent run — and then releases the
+lock by itself once the work finishes. No toggle to forget about.
 
-## Why not just prevent sleep?
+**90 KB · one file · no installer · no dependencies · no admin rights**
 
-Because then you have to remember to turn it back on. The point of this is
-that the lock releases itself.
+[Download](../../releases) · [How it decides](#how-it-decides-whether-an-app-is-working) · [FAQ](#faq) · [Build from source](#building-from-source)
 
-The companion `Install-KeepAwake.ps1` in this folder does the same thing for
-commands you launch from a terminal (`nosleep npm run build`). This program
-covers the other case: work already running inside a GUI app — a video export,
-an IDE build, a long upload, an AI agent working through a task.
+<img src="docs/images/wakewhile-live-readings.png" width="420"
+     alt="WakeWhile watching Visual Studio Code, showing live CPU, disk, network and memory readings against each threshold, with the lock held because the app is working">
 
-## When does it think an app is "working"?
+</div>
 
-Four signals, judged separately, because they behave nothing alike.
+---
 
-| signal | what it is | what it catches |
+## The problem
+
+Windows sleeps on an idle timer, and that timer does not care that you are
+three hours into a render, halfway through a 40 GB upload, or watching a
+coding agent work through a task.
+
+The usual fix is to disable sleep entirely. Which means remembering to turn it
+back on — and paying for it in battery every time you forget.
+
+## What WakeWhile does
+
+1. Open it. You get a list of the apps you currently have open, the same set
+   Alt+Tab shows.
+2. Pick the one you are waiting on.
+3. Press **DON'T SLEEP**.
+
+It drops to the system tray and watches. Windows stays awake for as long as
+that app is genuinely working, and the moment it goes quiet for long enough,
+the lock releases itself and normal sleep behaviour resumes.
+
+The tray icon is an eye: **open** while the lock is held, **closed** once it is
+let go.
+
+<div align="center">
+<img src="docs/images/wakewhile-tray-states.png" width="260"
+     alt="WakeWhile system tray eye icon in three states: green open eye while working, amber open eye while quiet but still holding, grey closed eye once released">
+</div>
+
+## Requirements
+
+Windows 10 or Windows 11, 64-bit. Nothing else — no .NET, no Visual C++
+runtime, no service, no administrator rights.
+
+## Install
+
+There is no installer. Download `WakeWhile.exe` from
+[Releases](../../releases) and run it. Put it anywhere you like.
+
+To remove it: delete the file. It writes two small files beside itself —
+`WakeWhile.log` and `WakeWhile.ini` — and touches nothing else. No registry
+keys, no `%APPDATA%`, no startup entries.
+
+---
+
+## How it decides whether an app is "working"
+
+Four signals, sampled once a second, summed over **the chosen app and every
+process it has spawned**. That last part matters: in Chrome, VS Code, Cursor,
+Discord and every other Electron app, the window you clicked belongs to a
+parent process that idles near zero while a child does the real work.
+
+| Signal | What it measures | What it catches |
 |---|---|---|
-| **CPU** | kernel + user time, as a percentage of **one core** | renders, builds, encodes |
-| **Disk** | `ReadFile` + `WriteFile` | copies, exports, big downloads landing on disk |
-| **Net** | socket traffic, and only while a connection to another machine is open | AI API sessions, uploads, streaming |
-| **RAM** | page faults per second, with the working set shown beside it | anything churning memory |
+| **CPU** | kernel + user time, as a percentage of **one core** | renders, builds, compression, encoding |
+| **Disk** | `ReadFile` + `WriteFile` bytes per second | exports, copies, downloads landing on disk |
+| **Network** | socket traffic, gated on a live connection to another machine | AI API sessions, uploads, streaming |
+| **Memory** | page faults per second | anything churning through memory |
 
-Each has a slider in the window, with the live reading printed underneath it,
-so the line the app has to cross is never abstract. A fifth slider sets the
-**wait** -- how long everything must stay under bar before the lock is
-dropped -- which measurement says is the control that really decides the
-outcome. All five are remembered in `nosleep.ini`.
+CPU is measured as a share of **one core**, not of the whole machine, so the
+number means the same thing on a 4-thread laptop and a 32-thread workstation.
+Task Manager divides by the logical processor count, which is why one fully
+busy core reads 6% there on a 16-thread box and 25% on a 4-thread one.
 
-All four are summed over **the whole process tree** — the app you picked and
-everything it has spawned. Chrome, VS Code, Cursor, Antigravity and every
-other Electron shell do their real work in child processes; the window you
-clicked belongs to a parent that sits near zero.
+Any one signal crossing its limit counts as working. Each limit is a slider,
+with the app's live reading printed directly underneath it — and the readings
+start the moment you select an app, before you commit to anything.
 
-### Every app has its own idea of "doing nothing"
+<div align="center">
+<img src="docs/images/wakewhile-app-picker.png" width="420"
+     alt="WakeWhile app picker listing the currently open Windows applications you can keep the PC awake for, with adjustable CPU, disk, network, memory and wait sliders below">
+</div>
 
-This is the part that matters, and the obvious design gets it wrong.
+### Defaults
 
-Measured on this machine, an **idle** VS Code with nothing being typed into it:
-
-```
-cpu   6% - 63% of one core, wandering
-disk  2.3 MB/s, second after second, without pause
-net   0.7 KB/s
-```
-
-Two of its own processes were passing 1.1 MB/s back and forth through a pipe —
-which Windows counts as ordinary read/write. Against fixed thresholds that reads
-as permanent work, and the machine never sleeps. Notepad, by contrast, sits at
-flat zero on all three.
-
-So the bar a signal has to beat is:
-
-    bar = the higher of ( where you put the slider ,
-                          what this app has been doing lately x a multiple )
-
-An IDE learns its own noisy baseline and the bars rise to suit it. A quiet app
-keeps the slider value. Nothing is hard-coded to any particular editor, so
-Cursor, Antigravity, a JetBrains IDE or anything else calibrates itself the
-same way. And because the learned part can only ever *raise* the bar, nothing
-the program works out on its own can make it more trigger-happy than you asked
-for. When that happens the row says `auto-raised`, so the number on screen is
-never a lie.
-
-The learned part is **ignored** when the app has been flat for the whole
-window. An export pegged at one core from start to finish has never shown a
-quiet moment, and letting it treat its own busy level as a baseline is how a
-render would talk itself into looking idle halfway through.
-
-Each signal is also judged on a **five-second mean**, so one stray spike is
-not work and a burst every few seconds still is.
-
-### Why the network signal exists
-
-An AI API task is mostly *waiting*. Little CPU, no disk, just small bursts of
-traffic every few seconds. Windows will not hand an unprivileged process a
-per-process network byte count — the APIs that do need an elevated prompt —
-but socket traffic goes through `DeviceIoControl`, so it lands in the process's
-"other" I/O counter. Measured: a 358 KB/s download appeared as 331 KB/s of
-"other", with read and write both flat at zero.
-
-That counter is gated on there being an established connection to another
-machine, so an app talking only to itself is never mistaken for one talking to
-a server.
-
-The default is **2 KB/s**, and it is low for a reason. Measured over 240
-seconds of a real AI session running inside VS Code, against the same editor
-sitting idle:
-
-| network, smoothed | idle VS Code | real AI session |
+| | Default | Range |
 |---|---|---|
-| median | 2.8 KB/s | 1.0 KB/s |
-| max | 5.5 KB/s | 11.1 KB/s |
+| CPU | 20% of one core | 5% – 400% |
+| Disk | 1 MB/s | 64 KB/s – 256 MB/s |
+| Network | 2 KB/s | 512 B/s – 4 MB/s |
+| Memory | 3,000 faults/s | 500 – 2,000,000 |
+| Wait | 10 minutes | 30 s – 30 min |
 
-The two overlap almost completely — between turns an AI session is *silent*,
-so its median is lower than the editor's own background chatter. What
-separates them is how long the gaps are, and only a low threshold keeps those
-gaps under a minute:
+They are set to catch real work rather than to let a noisy editor sleep, which
+is a deliberate choice between two things you cannot have at once. An IDE that
+pipes a couple of megabytes a second to itself while nobody is touching it
+will hold the lock at these settings. Drag **Disk** and **CPU** right if you
+would rather that machine slept.
 
-| threshold | longest gap, AI session | longest gap, idle |
+Move any slider and it is remembered in `WakeWhile.ini` beside the executable.
+Delete that file to go back to the defaults.
+
+---
+
+## Why your idle editor uses more CPU than your working one
+
+This is the finding that shaped the whole design, and it is not what you would
+guess.
+
+Measured on a real machine: 300 seconds of an active AI coding session inside
+VS Code, against 180 seconds of the same editor genuinely left alone.
+
+| | **Idle** (median) | **Working** (median) |
 |---|---|---|
-| **2 KB/s** | **37 s** — holds | **234 s** — sleeps |
-| 4 KB/s | 73 s — **sleeps mid-task** | sleeps |
-| 16 KB/s | 172 s — **sleeps mid-task** | sleeps |
-
-That leaves 23 seconds of margin. If your work pauses for longer than that,
-drag the Net slider left.
-
-### The icon
-
-An eye, open while the lock is held and closed once it is let go — so the
-state is readable at a glance, and readable in greyscale. Colour then says
-which kind of holding it is: green working, amber quiet but not yet released.
-
-| where | what you see |
-|---|---|
-| the file in Explorer, the title bar, the taskbar | open eye, blue |
-| tray, working | open eye, green |
-| tray, quiet but still holding | open eye, amber |
-| tray, released | **closed eye**, grey |
-
-TinyCC has no resource compiler, so nothing can be linked in. The mark is
-rasterised at run time instead — integer arithmetic, 4x4 coverage sampling,
-geometry in percent of the box — so one set of numbers serves the 16 px title
-bar, the 32 px taskbar and whatever a high-DPI screen asks for.
-
-For the file itself, `tools/seticon.c` writes a real icon resource into the
-finished executable using `BeginUpdateResource`, which is the API Windows
-provides for exactly this and handles the PE surgery. It draws with the same
-`src/icon.c`, so the file and the window cannot drift apart.
-
-It stores 16, 20, 24, 32, 40 and 48 px, and no more. Icon resources hold raw
-32-bit pixels — the compressed form the format allows would mean writing a
-DEFLATE encoder — so a 256 px entry costs 262 KB on its own and 128 px another
-66 KB. Storing every size took the program from 62 KB to 444 KB, which is a
-poor trade for a view most people never open. What is stored covers 100, 125,
-150 and 200 percent scaling exactly, for 26 KB; Explorer's larger views scale
-up from 48, and 96 is a clean doubling of it.
-
-The first attempt at the mark was a crescent moon with a bar through it. It
-fell apart at 16 px — the clear space a prohibition bar needs cuts a crescent,
-thin by definition, into two floating slivers. `tests/icon_preview.c` renders
-the mark at every size on both a light and a dark background, which is how
-that was caught, and `tests/icon_roundtrip.c` builds the real `HICON` and has
-Windows draw it back, which catches a broken mask or unpremultiplied alpha.
-
-### The wait is the control that matters
-
-The lock is held until **120 consecutive seconds** of quiet, and that number —
-not the four thresholds — is what actually tells work apart from an app just
-ticking over.
-
-That is not what you would guess, so here is the measurement. 300 seconds of a
-real working session against 180 seconds of the machine genuinely left alone:
-
-| channel | **idle** median | **working** median |
-|---|---|---|
-| CPU | **295** | 205 |
+| CPU | **295**‰ of a core | 205‰ |
 | Disk | **2.28 MB/s** | 652 KB/s |
-| Net | **677 B/s** | 467 B/s |
-| RAM | **1234/s** | 699/s |
+| Network | **677 B/s** | 467 B/s |
+| Memory | **1,234 faults/s** | 699 faults/s |
 
-**Idle reads higher than working on every single channel.** While the model is
-generating, the editor itself does almost nothing; while nobody is there at
-all, its file watcher and extension host hum along steadily. So no threshold
-separates the two — lower the bars enough to catch the work and an idle
-machine reads 99% busy and never sleeps.
+**The idle editor reads higher than the working one on every single signal.**
 
-What does separate them is how long the quiet stretches run:
+It makes sense once you see it. While the model is generating, the editor
+itself is doing almost nothing — it is waiting on a socket. While nobody is
+there at all, its file watcher, its language servers and its extension host
+hum along steadily forever.
 
-| | longest quiet stretch |
+So the two distributions are not merely overlapping, they are **inverted**, and
+no usage threshold can separate them. Lower the limits enough to catch the
+work and an idle machine reads 99% busy and never sleeps.
+
+What *does* separate them is how long the quiet stretches run:
+
+| | Longest quiet stretch |
 |---|---|
-| working | **74 s** |
-| idle | **161 s** |
+| Working | **74 s** |
+| Idle | **161 s** |
 
-120 seconds sits between the two with 46 seconds of margin on one side and 41
-on the other. At 60 both sides fail.
+Which is why WakeWhile does not release on a single quiet reading. It keys on
+the **length of continuous silence**, and that period is the fifth slider.
 
-There is a **Wait** slider for it, from 30 seconds to 10 minutes. If your work
-pauses for longer than two minutes, drag it right.
+---
 
 ## The log
 
-`nosleep.log` is written next to the executable, one line per second while
-watching. It is there so that "it never lets my machine sleep" has an answer
-you can read:
+`WakeWhile.log` is written next to the executable, one line per second while
+watching. It exists so that "why won't my computer go to sleep" always has an
+answer you can read:
 
 ```
-2026-08-24 03:08:06  watching: my-project - Visual Studio Code
-2026-08-24 03:08:06    pid 7784, plus every process it spawns
-2026-08-24 03:08:06    thresholds: cpu 500 permille | disk 4194304 B/s | net 2048 B/s | mem 20000 faults/s
-2026-08-24 03:08:08  tick procs=26 cpu=219/500 disk=2316366/4194304 net=122/2048 mem=656/20000 ws=3253MB conn=3 -> grace (-) quiet=0s lock=held
-2026-08-24 03:09:12  tick procs=26 cpu=188/500 disk=2049012/4194304 net=679/2048 mem=812/20000 ws=3251MB conn=3 -> IDLE (-) quiet=61s lock=off
+2026-08-24 07:03:32  WakeWhile started
+2026-08-24 07:03:32    thresholds: cpu 200 permille | disk 1048576 B/s | net 2048 B/s | mem 3000 faults/s | wait 600s
+2026-08-24 07:03:40  watching: my-project - Visual Studio Code
+2026-08-24 07:03:41  tick procs=26 cpu=189/200 disk=1877432/1048576 net=122/2048 mem=656/3000 ws=3253MB conn=3 -> BUSY (disk) quiet=0s lock=held
+2026-08-24 07:14:02  tick procs=26 cpu=41/200 disk=90112/1048576 net=0/2048 mem=88/3000 ws=3251MB conn=0 -> IDLE (-) quiet=601s lock=off
 ```
 
-Each pair is `measured/bar`. A trailing **`r`** means the app's own baseline
-raised that bar above the slider. `ws` is the working set across the whole
-tree. The word in brackets is which signal decided it — `cpu`, `disk`, `net`,
-`mem`, or `-` for none. `lock=held` / `lock=off` is the sleep lock itself.
+Each pair is `measured/limit`. The word in brackets is which signal decided it
+— `cpu`, `disk`, `net`, `mem`, or `-` for none. A trailing `r` on a limit means
+the app's own baseline raised it. `lock=held` / `lock=off` is the Windows sleep
+lock itself.
 
 If the machine is staying awake and you want to know why, find the last line
 with something other than `-` in brackets.
 
-The file restarts once it passes 4 MB.
+---
 
-## Using it
+## FAQ
 
-- Pick a row, press **DON'T SLEEP**. The window hides; a dot appears by the
-  clock: **green** working, **amber** quiet but still holding, **grey**
-  released and waiting for work to resume. Windows 11 hides new tray icons by
-  default — to pin it: Settings → Personalisation → Taskbar → Other system
-  tray icons.
-- Left-click the tray icon to bring the window back, right-click for
-  Show / Release / Exit.
-- **Keep the screen on too** is off by default — the machine stays awake but
-  the display is free to turn off and save power.
-- Closing the window while it is watching just hides it. Release or Exit from
-  the tray to stop.
-- If the app you picked exits, the lock is released and the window comes back.
+### How do I keep Windows awake without disabling sleep?
 
-To confirm Windows really is holding the lock, from an **admin** prompt:
+That is what WakeWhile is for. Instead of turning sleep off globally, it holds
+a temporary lock only while a specific app is busy, and drops it afterwards.
+Your power plan stays exactly as you configured it.
+
+### How do I stop my PC from sleeping during a render or export?
+
+Open WakeWhile, pick your renderer from the list — Blender, Premiere, DaVinci
+Resolve, Handbrake, whatever it is — and press DON'T SLEEP. A render pegs the
+CPU well past the default limit, so the lock holds until the render finishes,
+then releases on its own.
+
+### How do I keep my laptop awake while downloading a large file?
+
+Pick the browser or download client. Sustained transfers cross the disk or
+network limit, so the machine stays up while bytes are moving and sleeps once
+they stop.
+
+### How do I keep my PC awake during a long build?
+
+Pick your IDE or terminal. WakeWhile watches the whole process tree, so a
+compiler spawned by your editor counts even though the editor window itself is
+idle.
+
+### How do I keep Windows awake while an AI agent runs?
+
+Pick the editor or terminal your agent runs in. This case is the reason the
+`Wait` slider exists: an agent session is mostly *waiting on the network*, with
+long quiet gaps between bursts. See
+[the measurement above](#why-your-idle-editor-uses-more-cpu-than-your-working-one).
+
+### Why won't my computer go to sleep?
+
+Something is holding a system power request. Run this in an elevated prompt to
+see what:
 
 ```
 powercfg /requests
 ```
 
-`nosleep.exe` should be listed under SYSTEM while the dot is green or amber,
-and gone once it turns grey.
+If WakeWhile is the one holding it, you will see `WakeWhile.exe` listed under
+`SYSTEM`, and `WakeWhile.log` will tell you which signal is responsible and
+what the reading was.
 
-## Building it
+### Is this a mouse jiggler?
 
-```
-powershell -ExecutionPolicy Bypass -File tools\get-tcc.ps1   (once)
+No. Mouse jigglers fake input, which keeps the screen on, defeats your lock
+screen and lies to anything watching for user presence. WakeWhile asks Windows
+directly, through the documented power API, and never touches your input.
+
+### Does it keep the screen on too?
+
+Only if you tick **Keep the screen on too**. By default the display is allowed
+to turn off normally while the machine itself stays awake — which is usually
+what you want for an overnight render.
+
+### Can it watch more than one app at a time?
+
+Not currently. It watches one app and its process tree. If you need two, run a
+second copy from a different folder — the single-instance lock is per install.
+
+### What exactly does it call?
+
+`SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED)`, plus
+`ES_DISPLAY_REQUIRED` when the screen box is ticked. That is the documented
+Windows API for exactly this, the same one media players use. Clearing it is a
+single call, it is scoped to the process, and Windows drops the request
+automatically if the process dies — so a crash cannot leave your machine
+permanently awake.
+
+### Is it safe? It's an unsigned executable.
+
+It is unsigned, which means SmartScreen will warn you the first time. The
+source is all here, it is about 3,500 lines of C, and you can build it yourself
+in a few seconds with the instructions below. Every release publishes a
+SHA-256 hash.
+
+---
+
+## How does it compare?
+
+| | WakeWhile | Caffeine | PowerToys Awake | Don't Sleep | Mouse jigglers |
+|---|---|---|---|---|---|
+| Releases automatically when work ends | **yes** | no | no | no | no |
+| Watches a specific app | **yes** | no | no | partly | no |
+| Watches the whole process tree | **yes** | no | no | no | no |
+| Adjustable per-signal limits | **yes** | no | no | some | no |
+| Fakes input | no | no | no | no | yes |
+| Needs an installer | no | no | yes (PowerToys) | no | varies |
+
+Some tools can hold the machine awake *while a chosen program is running*.
+That is a different question from *while it is actually doing something* — a
+program left open all night is still running. WakeWhile answers the second
+question, which is why it can let go on its own.
+
+---
+
+## Building from source
+
+You need nothing installed. The whole toolchain is a 480 KB download.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\get-tcc.ps1
 build.cmd
 ```
 
-`get-tcc.ps1` downloads TinyCC — 480 KB, unzips to 1.6 MB, no installer, and
-deleting `tools\tcc` undoes it completely. `build.cmd` runs the tests first
-and refuses to produce the executable if any fail.
+`get-tcc.ps1` fetches TinyCC into `tools\tcc\` (1.6 MB unpacked, no installer,
+delete the folder to undo). `build.cmd` runs the tests, builds
+`WakeWhile.exe`, and writes the icon into it. It takes under a second.
 
-There is no manifest and no `comctl32`: TinyCC has no resource compiler, so
-every control is drawn with GDI instead. That is also why dark mode and the
-scrollbar look right.
+There are no libraries, no package manager and no generated files. Everything
+links against DLLs that ship with Windows.
 
-All the numbers live in [src/config.h](src/config.h) — thresholds, the grace
-window, the sampling rate — with the measurement behind each one written next
-to it.
+### Project layout
 
-## Watching a process from the console
-
-`build\probe.exe <pid> [seconds]` prints the same numbers the app uses, one
-line a second, without touching the GUI. Useful for working out what an app
-actually does when you think it is idle.
-
-## Layout
-
-| | |
+| Path | What it is |
 |---|---|
-| `src/tracker.c` | per-PID table → aggregate deltas per channel. No Win32. |
-| `src/activity.c` | the rule: bars, baselines, smoothing, grace. No Win32. |
-| `src/monitor.c` | process tree, `GetProcessTimes`, `GetProcessIoCounters` |
+| `src/tracker.c` | per-process deltas across a tree: appearing, exiting, PID reuse |
+| `src/activity.c` | the rule — four signals, their limits, and the wait |
+| `src/monitor.c` | Win32 sampling: toolhelp, process times, I/O and memory counters |
+| `src/applist.c` | the open-window list |
 | `src/netstat.c` | established connections off this machine, per tree |
-| `src/applist.c` | the open apps, filtered the way Alt+Tab filters |
 | `src/power.c` | `SetThreadExecutionState` |
-| `src/logfile.c` | the log |
-| `src/ui.c` | drawing primitives and the list control |
-| `src/theme.c` | the light and dark palettes |
-| `src/icon.c`, `src/tray.c` | the eye, rasterised at run time, and the tray |
-| `tools/seticon.c` | writes the icon resource into the finished exe |
-| `src/app.c` | the window and the once-a-second tick |
-| `src/settings.c` | the `.ini` beside the executable |
-| `tests/test_activity.c` | 85 headless checks over the two pure modules |
+| `src/ui.c` | owner-drawn list, sliders, fonts, DPI |
+| `src/icon.c` | the eye, rasterised at run time for every size needed |
+| `src/app.c` | the window, the tick, and the wiring |
+| `tools/seticon.c` | writes the icon resource into the finished executable |
+| `tools/defs/` | the imports TinyCC's own `.def` files are missing |
+| `tests/test_activity.c` | 92 headless checks over the two pure modules |
 
-The design, and the measurements behind every constant, are in
-[docs/superpowers/specs/2026-08-23-nosleep-gui-design.md](docs/superpowers/specs/2026-08-23-nosleep-gui-design.md).
+`tracker.c` and `activity.c` contain no Win32 calls at all, which is what makes
+the hard parts testable without a machine to put to sleep.
+
+### A note on the toolchain
+
+It is built with [TinyCC](https://bellard.org/tcc/) rather than MSVC or MinGW,
+which is why the whole toolchain fits in a 480 KB download and the result is
+90 KB with no runtime to ship. TinyCC has no resource compiler, so the icon is
+rasterised in code and written into the PE afterwards by `tools/seticon.c`
+using `BeginUpdateResource`.
+
+---
+
+## License
+
+MIT. See [LICENSE](LICENSE).
