@@ -104,4 +104,27 @@ WINUSERAPI BOOL WINAPI SetProcessDPIAware(void);
 WINBASEAPI int WINAPI WideCharToMultiByte(UINT, DWORD, LPCWSTR, int, LPSTR,
                                           int, LPCSTR, LPBOOL);
 
+
+/* ------------------------------------------------------ psapi.h subset */
+
+typedef struct _PROCESS_MEMORY_COUNTERS {
+    DWORD  cb;
+    DWORD  PageFaultCount;
+    SIZE_T PeakWorkingSetSize;
+    SIZE_T WorkingSetSize;
+    SIZE_T QuotaPeakPagedPoolUsage;
+    SIZE_T QuotaPagedPoolUsage;
+    SIZE_T QuotaPeakNonPagedPoolUsage;
+    SIZE_T QuotaNonPagedPoolUsage;
+    SIZE_T PagefileUsage;
+    SIZE_T PeakPagefileUsage;
+} PROCESS_MEMORY_COUNTERS;
+
+WINBASEAPI BOOL WINAPI GetProcessMemoryInfo(HANDLE, PROCESS_MEMORY_COUNTERS *,
+                                            DWORD);
+
+#ifndef PROCESS_VM_READ
+#define PROCESS_VM_READ 0x0010
+#endif
+
 #endif

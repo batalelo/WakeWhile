@@ -43,12 +43,12 @@ rem that it omits entirely.
 "%TCC%" -Wall ^
   src\app.c src\ui.c src\theme.c src\tray.c src\applist.c ^
   src\monitor.c src\tracker.c src\activity.c src\power.c ^
-  src\netstat.c src\logfile.c ^
+  src\netstat.c src\logfile.c src\settings.c ^
   -o nosleep.exe ^
   -Wl,-subsystem=windows ^
   -lkernel32 -luser32 -lgdi32 ^
   build\kernel32ext.def build\shell32.def build\advapi32.def ^
-  build\user32ext.def
+  build\user32ext.def build\psapi.def
 if errorlevel 1 (
   echo   build FAILED
   exit /b 1

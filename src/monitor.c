@@ -25,7 +25,11 @@ static u64 now_100ns(void)
    fallback for pre-Vista, which we will never meet in practice. */
 static HANDLE open_for_query(unsigned int pid)
 {
-    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
+    /* VM_READ is what GetProcessMemoryInfo wants on top of the query right.
+       If it is refused we still get everything except the memory figures. */
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ,
+                           FALSE, (DWORD)pid);
+    if (!h) h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
     if (!h) h = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, (DWORD)pid);
     return h;
 }
@@ -36,6 +40,7 @@ static int sample_process(unsigned int pid, ProcSample *s)
     HANDLE h;
     FILETIME create, exit, kernel, user;
     IO_COUNTERS io;
+    PROCESS_MEMORY_COUNTERS mem;
 
     h = open_for_query(pid);
     if (!h) return 0;
@@ -58,6 +63,18 @@ static int sample_process(unsigned int pid, ProcSample *s)
     } else {
         s->rw_bytes = 0;
         s->other_bytes = 0;
+    }
+
+    /* Page faults are the honest measure of memory activity: a process that
+       is really working touches new pages constantly, an idle one does not.
+       The working set is carried alongside only so the user can see it. */
+    mem.cb = sizeof mem;
+    if (GetProcessMemoryInfo(h, &mem, sizeof mem)) {
+        s->faults = mem.PageFaultCount;
+        s->ws_bytes = (u64)mem.WorkingSetSize;
+    } else {
+        s->faults = 0;
+        s->ws_bytes = 0;
     }
 
     CloseHandle(h);
@@ -143,6 +160,8 @@ int monitor_tick(Monitor *m, TrackerDelta *out)
     out->d_cpu_100ns = 0;
     out->d_rw_bytes = 0;
     out->d_other_bytes = 0;
+    out->d_faults = 0;
+    out->ws_bytes = 0;
     out->d_wall_100ns = 0;
     out->n_procs = 0;
 

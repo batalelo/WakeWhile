@@ -14,6 +14,7 @@
 #include "power.h"
 #include "netstat.h"
 #include "logfile.h"
+#include "settings.h"
 
 /* ------------------------------------------------------------- constants */
 
@@ -30,23 +31,31 @@
 /* Layout in logical pixels; everything is scaled through ui_scale. The
    height of the list, and therefore of the window, is decided at startup
    from the monitor work area -- a fixed height overflows a 768 px screen. */
-#define WIN_W    400
-#define PAD       16
-#define HEAD_Y    16
-#define HEAD_H    40
-#define LIST_Y    64
-#define INFO_H    18
-#define CHK_H     22
-#define BTN_H     46
-#define ROW_H     40
-#define ROWS_MAX  10
-#define ROWS_MIN   4
+#define WIN_W     430
+#define PAD        16
+#define HEAD_Y     14
+#define HEAD_H     34
+#define LIST_Y     54
+#define INFO_H     16
+#define ROW_H      40
+#define ROWS_MAX    8
+#define ROWS_MIN    3
+
+/* One sensitivity row: label, slider and threshold on top, the live reading
+   underneath. */
+#define CH_ROW_H    38
+#define CH_LABEL_W  42
+#define CH_SLIDER_W 150
+
+#define CHK_H      22
+#define BTN_H      46
 
 #define WIN_STYLE (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX)
 
-/* Everything below the list, in logical pixels: gap, info, gap, checkbox,
-   gap, button, bottom padding. */
-#define BELOW_LIST (10 + INFO_H + 10 + CHK_H + 10 + BTN_H + 16)
+/* Everything below the list: gap, info, gap, four rows, gap, checkbox, gap,
+   button, bottom padding. */
+#define BELOW_LIST (8 + INFO_H + 12 + (CH_ROW_H * CH_COUNT) + 10 + CHK_H \
+                    + 10 + BTN_H + 14)
 
 typedef enum { MODE_PICK = 0, MODE_WATCH = 1 } Mode;
 
@@ -66,7 +75,11 @@ static int       g_app_count;
 static Mode      g_mode = MODE_PICK;
 static Monitor   g_monitor;
 static Activity  g_activity;
+static ActivityConfig g_cfg;
 static ActivityState g_state = ACT_IDLE;
+
+static UiSlider  g_slider[CH_COUNT];
+static int       g_dragging = -1;   /* which slider, or -1 */
 
 static int       g_keep_display;
 static WCHAR     g_watch_title[128];
@@ -99,6 +112,7 @@ static int wlen(const WCHAR *s)
 /* Computed once, in device pixels. */
 static int g_list_h;
 static int g_info_y;
+static int g_panel_y;
 static int g_check_y;
 static int g_button_y;
 static int g_client_h;
@@ -144,14 +158,20 @@ static void compute_layout(void)
     if (rows < ROWS_MIN) rows = ROWS_MIN;
 
     g_list_h   = rows * ui_scale(ROW_H);
-    g_info_y   = ui_scale(LIST_Y) + g_list_h + ui_scale(10);
-    g_check_y  = g_info_y + ui_scale(INFO_H + 10);
+    g_info_y   = ui_scale(LIST_Y) + g_list_h + ui_scale(8);
+    g_panel_y  = g_info_y + ui_scale(INFO_H + 12);
+    g_check_y  = g_panel_y + ui_scale(CH_ROW_H * CH_COUNT + 10);
     g_button_y = g_check_y + ui_scale(CHK_H + 10);
-    g_client_h = g_button_y + ui_scale(BTN_H + 16);
+    g_client_h = g_button_y + ui_scale(BTN_H + 14);
+}
+
+static int channel_row_y(int i)
+{
+    return g_panel_y + ui_scale(CH_ROW_H * i);
 }
 
 static RECT button_rect(void) { return rect_at(PAD, g_button_y, WIN_W - 2 * PAD, BTN_H); }
-static RECT check_rect(void)  { return rect_at(PAD, g_check_y, 220, CHK_H); }
+static RECT check_rect(void)  { return rect_at(PAD, g_check_y, 240, CHK_H); }
 
 static RECT refresh_rect(void)
 {
@@ -161,6 +181,15 @@ static RECT refresh_rect(void)
 static int in_rect(const RECT *r, int x, int y)
 {
     return x >= r->left && x < r->right && y >= r->top && y < r->bottom;
+}
+
+/* Keeps every slider's track rectangle in step with the layout. */
+static void place_sliders(void)
+{
+    int i;
+    for (i = 0; i < CH_COUNT; i++)
+        g_slider[i].track = rect_at(PAD + CH_LABEL_W, channel_row_y(i),
+                                    CH_SLIDER_W, 20);
 }
 
 /* -------------------------------------------------------------- app list */
@@ -228,43 +257,68 @@ static void draw_row(HDC dc, int index, const RECT *r, int selected, int hot,
             DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
 }
 
-/* -------------------------------------------------------- status strings */
+/* -------------------------------------------------- formatting the numbers */
+
+static void fmt_bytes_rate(WCHAR *out, unsigned int bps)
+{
+    if (bps >= 1024u * 1024u)
+        wsprintfW(out, L"%u.%u MB/s", bps >> 20, ((bps >> 16) & 15) * 10 / 16);
+    else if (bps >= 1024u)
+        wsprintfW(out, L"%u.%u KB/s", bps >> 10, ((bps & 1023) * 10) >> 10);
+    else
+        wsprintfW(out, L"%u B/s", bps);
+}
+
+static void fmt_count_rate(WCHAR *out, unsigned int per_sec)
+{
+    if (per_sec >= 1000000u)
+        wsprintfW(out, L"%u.%uM/s", per_sec / 1000000u,
+                  (per_sec % 1000000u) / 100000u);
+    else if (per_sec >= 1000u)
+        wsprintfW(out, L"%u.%uK/s", per_sec / 1000u, (per_sec % 1000u) / 100u);
+    else
+        wsprintfW(out, L"%u/s", per_sec);
+}
+
+static void fmt_channel(WCHAR *out, int ch, unsigned int v)
+{
+    switch (ch) {
+    case CH_CPU:  wsprintfW(out, L"%u.%u%%", v / 10, v % 10); break;
+    case CH_DISK:
+    case CH_NET:  fmt_bytes_rate(out, v); break;
+    default:      fmt_count_rate(out, v); break;
+    }
+}
+
+static const WCHAR *channel_label(int ch)
+{
+    switch (ch) {
+    case CH_CPU:  return L"CPU";
+    case CH_DISK: return L"Disk";
+    case CH_NET:  return L"Net";
+    default:      return L"RAM";
+    }
+}
 
 /* CPU as a percentage of one core, so 340 means three and a bit cores. */
 static unsigned int cpu_percent(void)
 {
-    return g_activity.cpu.smoothed / 10;
-}
-
-static void fmt_rate(WCHAR *out, unsigned int bps)
-{
-    if (bps >= 1024u * 1024u)
-        wsprintfW(out, L"%u.%u MB/s", bps >> 20, ((bps >> 16) & 15) * 10 / 16);
-    else
-        wsprintfW(out, L"%u KB/s", bps >> 10);
+    return g_activity.ch[CH_CPU].smoothed / 10;
 }
 
 static void fmt_status(WCHAR *out, int cap)
 {
     WCHAR line[192];
-    WCHAR rate[32];
+    WCHAR value[40];
 
     if (g_state == ACT_BUSY) {
-        switch (g_activity.why) {
-        case WHY_CPU:
-            wsprintfW(line, L"working \x00b7 %u%% of one core", cpu_percent());
-            break;
-        case WHY_DISK:
-            fmt_rate(rate, g_activity.disk.smoothed);
-            wsprintfW(line, L"working \x00b7 reading and writing %s", rate);
-            break;
-        case WHY_NET:
-            fmt_rate(rate, g_activity.net.smoothed);
-            wsprintfW(line, L"working \x00b7 network %s", rate);
-            break;
-        default:
-            wsprintfW(line, L"holding \x00b7 measuring...");
-            break;
+        if (g_activity.why < 0) {
+            wcopy(line, L"holding \x00b7 measuring...", 192);
+        } else {
+            fmt_channel(value, g_activity.why,
+                        g_activity.ch[g_activity.why].smoothed);
+            wsprintfW(line, L"working \x00b7 %s %s",
+                      channel_label(g_activity.why), value);
         }
     } else if (g_state == ACT_GRACE) {
         unsigned int quiet = (unsigned int)(g_activity.quiet_ms / 1000);
@@ -378,6 +432,71 @@ static void paint_button(HDC dc)
             DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_NOPREFIX);
 }
 
+/* The four sensitivity rows. Each shows where its threshold sits and, right
+   beneath it, what the watched app is doing at this instant -- so the line
+   the app has to cross is never abstract. */
+static void paint_channels(HDC dc)
+{
+    const UiFonts *f = ui_fonts();
+    int i;
+
+    for (i = 0; i < CH_COUNT; i++) {
+        int y = channel_row_y(i);
+        RECT label, value, live;
+        WCHAR text[80], now[40];
+        const Channel *c = &g_activity.ch[i];
+        int active = (g_mode == MODE_WATCH);
+        COLORREF lc;
+
+        label = rect_at(PAD, y, CH_LABEL_W, 20);
+        ui_text(dc, &label, channel_label(i), f->body, g_theme.text_dim,
+                DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
+
+        ui_draw_slider(dc, &g_theme, &g_slider[i], 1);
+
+        /* The threshold, in the channel's own units. */
+        fmt_channel(text, i, g_cfg.ch[i].threshold);
+        value = rect_at(PAD + CH_LABEL_W + CH_SLIDER_W + 8, y,
+                        WIN_W - 2 * PAD - CH_LABEL_W - CH_SLIDER_W - 8, 20);
+        ui_text(dc, &value, text, f->body, g_theme.text,
+                DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_NOPREFIX);
+
+        /* And what it is doing right now. */
+        live = rect_at(PAD + CH_LABEL_W, y + ui_scale(18),
+                       WIN_W - 2 * PAD - CH_LABEL_W, 16);
+        if (!active) {
+            wcopy(text, L"not watching yet", 80);
+            lc = g_theme.text_dim;
+        } else {
+            fmt_channel(now, i, c->smoothed);
+            if (i == CH_MEM && g_activity.ws_bytes) {
+                unsigned int mb = (unsigned int)(g_activity.ws_bytes >> 20);
+                if (mb >= 1024)
+                    wsprintfW(text, L"now %s  \x00b7  %u.%u GB in use", now,
+                              mb >> 10, ((mb & 1023) * 10) >> 10);
+                else
+                    wsprintfW(text, L"now %s  \x00b7  %u MB in use", now, mb);
+            } else if (i == CH_NET) {
+                wsprintfW(text, L"now %s  \x00b7  %d connection%s", now,
+                          g_activity.conns,
+                          g_activity.conns == 1 ? L"" : L"s");
+            } else {
+                wsprintfW(text, L"now %s", now);
+            }
+            lc = c->busy ? g_theme.ok : g_theme.text_dim;
+        }
+        ui_text(dc, &live, text, f->small, lc,
+                DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+
+        /* A bar the app's own noise pushed up is worth saying out loud. */
+        if (active && c->learned_used) {
+            RECT mark = rect_at(WIN_W - PAD - 64, y + ui_scale(18), 64, 16);
+            ui_text(dc, &mark, L"auto-raised", f->small, g_theme.warn,
+                    DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_NOPREFIX);
+        }
+    }
+}
+
 static void paint_header(HDC dc)
 {
     const UiFonts *f = ui_fonts();
@@ -391,14 +510,14 @@ static void paint_header(HDC dc)
                    : g_theme.off;
 
         dot.left = r.left;
-        dot.top = r.top + ui_scale(6);
+        dot.top = r.top + ui_scale(5);
         dot.right = dot.left + ui_scale(9);
         dot.bottom = dot.top + ui_scale(9);
         ui_fill_round(dc, &dot, ui_scale(4), c);
 
         name = r;
         name.left += ui_scale(17);
-        name.bottom = name.top + ui_scale(19);
+        name.bottom = name.top + ui_scale(18);
         ui_text(dc, &name, g_watch_title[0] ? g_watch_title : g_watch_exe,
                 f->head, g_theme.text,
                 DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
@@ -421,7 +540,7 @@ static void paint_header(HDC dc)
 static void paint_info(HDC dc)
 {
     const UiFonts *f = ui_fonts();
-    RECT left = rect_at(PAD, g_info_y, 240, INFO_H);
+    RECT left = rect_at(PAD, g_info_y, 260, INFO_H);
     RECT right = refresh_rect();
     WCHAR line[128];
 
@@ -466,6 +585,7 @@ static void paint_window(HWND h)
 
     paint_header(mem);
     paint_info(mem);
+    paint_channels(mem);
     paint_checkbox(mem);
     paint_button(mem);
 
@@ -478,6 +598,16 @@ static void paint_window(HWND h)
 }
 
 /* --------------------------------------------------------- mode switching */
+
+static void log_thresholds(void)
+{
+    char line[256];
+    wsprintfA(line, "  thresholds: cpu %u permille | disk %u B/s | net %u B/s"
+                    " | mem %u faults/s",
+              g_cfg.ch[CH_CPU].threshold, g_cfg.ch[CH_DISK].threshold,
+              g_cfg.ch[CH_NET].threshold, g_cfg.ch[CH_MEM].threshold);
+    log_line(line);
+}
 
 static void stop_watching(const WCHAR *why)
 {
@@ -497,7 +627,6 @@ static void stop_watching(const WCHAR *why)
 static void start_watching(void)
 {
     const AppEntry *a;
-    ActivityConfig cfg;
 
     if (g_list_state.sel < 0 || g_list_state.sel >= g_app_count) return;
     a = &g_apps[g_list_state.sel];
@@ -508,8 +637,7 @@ static void start_watching(void)
         return;
     }
 
-    activity_defaults(&cfg);
-    activity_init(&g_activity, &cfg);
+    activity_init(&g_activity, &g_cfg);
 
     wcopy(g_watch_title, a->title, 128);
     wcopy(g_watch_exe, a->exe, 64);
@@ -532,11 +660,7 @@ static void start_watching(void)
         wsprintfA(line, "  pid %u, plus every process it spawns", a->pid);
         log_line(line);
         log_linew("  image: ", a->exe);
-        wsprintfA(line, "  bars: cpu %u permille | disk %u B/s | net %u B/s"
-                        "  (each lowered to this app.s own baseline when it "
-                        "shows one)",
-                  cfg.cpu.absolute, cfg.disk.absolute, cfg.net.absolute);
-        log_line(line);
+        log_thresholds();
         log_line(g_keep_display ? "  screen will be kept on too"
                                 : "  screen may still turn off");
     }
@@ -557,22 +681,24 @@ static void show_main_window(void)
 
 /* One line per tick, with every number the rule looked at. This is what
    turns "it never lets my machine sleep" into something you can read.
-   A trailing r marks a bar the app's own baseline lowered. */
+   A trailing r marks a bar the app's own baseline raised. */
 static void log_tick(const TrackerDelta *d, int conns, int held)
 {
-    char line[320];
+    char line[400];
     const Activity *a = &g_activity;
 
     wsprintfA(line,
-        "tick procs=%d cpu=%u/%u%s disk=%u/%u%s net=%u/%u%s conn=%d "
-        "-> %s (%s) quiet=%us lock=%s",
+        "tick procs=%d cpu=%u/%u%s disk=%u/%u%s net=%u/%u%s mem=%u/%u%s "
+        "ws=%uMB conn=%d -> %s (%s) quiet=%us lock=%s",
         d->n_procs,
-        a->cpu.smoothed,  a->cpu.bar,  a->cpu.relative_used  ? "r" : "",
-        a->disk.smoothed, a->disk.bar, a->disk.relative_used ? "r" : "",
-        a->net.smoothed,  a->net.bar,  a->net.relative_used  ? "r" : "",
+        a->ch[CH_CPU].smoothed,  a->ch[CH_CPU].bar,  a->ch[CH_CPU].learned_used  ? "r" : "",
+        a->ch[CH_DISK].smoothed, a->ch[CH_DISK].bar, a->ch[CH_DISK].learned_used ? "r" : "",
+        a->ch[CH_NET].smoothed,  a->ch[CH_NET].bar,  a->ch[CH_NET].learned_used  ? "r" : "",
+        a->ch[CH_MEM].smoothed,  a->ch[CH_MEM].bar,  a->ch[CH_MEM].learned_used  ? "r" : "",
+        (unsigned int)(a->ws_bytes >> 20),
         conns,
         g_state == ACT_BUSY ? "BUSY" : g_state == ACT_GRACE ? "grace" : "IDLE",
-        activity_reason_name(a->why),
+        activity_channel_name(a->why),
         (unsigned)(a->quiet_ms / 1000),
         held ? (power_ok() ? "held" : "REFUSED") : "off");
 
@@ -635,17 +761,39 @@ static void show_tray_menu(void)
 
 /* ---------------------------------------------------------- window proc */
 
+/* Moving a slider takes effect at once, including mid-watch: the point of
+   having it is to see the decision change while you drag. */
+static void slider_changed(int i)
+{
+    g_cfg.ch[i].threshold = activity_from_slider(&g_cfg.ch[i],
+                                                 g_slider[i].pos);
+    g_activity.cfg.ch[i] = g_cfg.ch[i];
+    InvalidateRect(g_wnd, 0, FALSE);
+}
+
 static void on_mouse_move(int x, int y)
 {
     RECT btn = button_rect(), chk = check_rect(), ref = refresh_rect();
     HotItem was = g_hot;
+    int i, hot_changed = 0;
+
+    if (g_dragging >= 0) {
+        if (ui_slider_drag(&g_slider[g_dragging], x))
+            slider_changed(g_dragging);
+        return;
+    }
+
+    for (i = 0; i < CH_COUNT; i++) {
+        int h = ui_slider_hit(&g_slider[i], x, y);
+        if (h != g_slider[i].hot) { g_slider[i].hot = h; hot_changed = 1; }
+    }
 
     if (in_rect(&btn, x, y)) g_hot = HOT_BUTTON;
     else if (in_rect(&chk, x, y)) g_hot = HOT_CHECK;
     else if (g_mode == MODE_PICK && in_rect(&ref, x, y)) g_hot = HOT_REFRESH;
     else g_hot = HOT_NONE;
 
-    if (g_hot != was) {
+    if (g_hot != was || hot_changed) {
         TRACKMOUSEEVENT tme;
         InvalidateRect(g_wnd, 0, FALSE);
         tme.cbSize = sizeof tme;
@@ -668,6 +816,7 @@ static void on_click(HotItem item)
 
     case HOT_CHECK:
         g_keep_display = !g_keep_display;
+        settings_save(&g_cfg, g_keep_display);
         if (g_mode == MODE_WATCH)
             power_apply(activity_should_hold(g_state), g_keep_display);
         break;
@@ -715,17 +864,39 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         if (g_hot != HOT_NONE) { g_hot = HOT_NONE; InvalidateRect(h, 0, FALSE); }
         return 0;
 
-    case WM_LBUTTONDOWN:
-        on_mouse_move(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+    case WM_LBUTTONDOWN: {
+        int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
+        int i;
+        for (i = 0; i < CH_COUNT; i++) {
+            if (ui_slider_hit(&g_slider[i], x, y)) {
+                g_dragging = i;
+                SetCapture(h);
+                if (ui_slider_click(&g_slider[i], x, y)) slider_changed(i);
+                else InvalidateRect(h, 0, FALSE);
+                return 0;
+            }
+        }
+        on_mouse_move(x, y);
         if (g_hot != HOT_NONE) {
             g_pressed = g_hot;
             SetCapture(h);
             InvalidateRect(h, 0, FALSE);
         }
         return 0;
+    }
 
     case WM_LBUTTONUP: {
         HotItem was = g_pressed;
+        if (g_dragging >= 0) {
+            g_slider[g_dragging].dragging = 0;
+            g_dragging = -1;
+            ReleaseCapture();
+            /* Written once the grip is let go, not on every pixel. */
+            settings_save(&g_cfg, g_keep_display);
+            if (g_mode == MODE_WATCH) log_thresholds();
+            InvalidateRect(h, 0, FALSE);
+            return 0;
+        }
         if (was != HOT_NONE) {
             ReleaseCapture();
             g_pressed = HOT_NONE;
@@ -851,6 +1022,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     MSG msg;
     HANDLE once;
     RECT lr;
+    int i;
 
     (void)prev; (void)cmd; (void)show;
     g_inst = inst;
@@ -875,6 +1047,17 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
     compute_layout();
     theme_load(&g_theme);
 
+    activity_defaults(&g_cfg);
+    settings_load(&g_cfg, &g_keep_display);
+    log_thresholds();
+    for (i = 0; i < CH_COUNT; i++) {
+        g_slider[i].pos = activity_to_slider(&g_cfg.ch[i],
+                                             g_cfg.ch[i].threshold);
+        g_slider[i].hot = 0;
+        g_slider[i].dragging = 0;
+    }
+    activity_init(&g_activity, &g_cfg);
+
     ui_register_list_class(inst);
 
     g_wnd = create_main_window();
@@ -882,6 +1065,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE prev, LPSTR cmd, int show)
 
     theme_apply_titlebar(g_wnd, g_theme.dark);
     tray_init(g_wnd, MSG_TRAY);
+    place_sliders();
 
     g_list_state.theme = &g_theme;
     g_list_state.draw_row = draw_row;

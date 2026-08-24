@@ -260,7 +260,7 @@ static void test_first_tick_holds(void)
 
     check(activity_update(&a, &d, 0) == ACT_BUSY,
           "the tick right after the button is pressed holds the lock");
-    check(a.why == WHY_FIRST, "and says so");
+    check(a.why == -1, "and says so");
 }
 
 static void test_cpu_normalised_to_one_core(void)
@@ -269,11 +269,11 @@ static void test_cpu_normalised_to_one_core(void)
 
     begin(&a);
     run(&a, 1, 1000, 0, 0, 0);
-    check_eq(a.cpu.value, 1000, "one busy core reads 1000 permille");
+    check_eq(a.ch[CH_CPU].value, 1000, "one busy core reads 1000 permille");
 
     begin(&a);
     run(&a, 1, 4000, 0, 0, 0);
-    check_eq(a.cpu.value, 4000, "four busy cores read 4000");
+    check_eq(a.ch[CH_CPU].value, 4000, "four busy cores read 4000");
 }
 
 static void test_a_single_spike_is_not_work(void)
@@ -288,7 +288,7 @@ static void test_a_single_spike_is_not_work(void)
 
     check(a.state != ACT_BUSY,
           "one spike inside a quiet run does not count as work");
-    check(a.cpu.smoothed < a.cpu.bar, "the short mean absorbs it");
+    check(a.ch[CH_CPU].smoothed < a.ch[CH_CPU].bar, "the short mean absorbs it");
 }
 
 static void test_sustained_cpu_is_work(void)
@@ -298,7 +298,7 @@ static void test_sustained_cpu_is_work(void)
     begin(&a);
     check(run(&a, 10, 1000, 0, 0, 0) == ACT_BUSY,
           "a core held busy for ten seconds is work");
-    check(a.why == WHY_CPU, "and the reason given is the CPU");
+    check(a.why == CH_CPU, "and the reason given is the CPU");
 }
 
 static void test_grace_window(void)
@@ -356,17 +356,38 @@ static void test_an_idle_ide_is_allowed_to_sleep(void)
     begin(&a);
     for (i = 0; i < 200; i++) {
         TrackerDelta d = rates(cpu_trace[i % 12],
-                               2030000 + (i % 7) * 9000,   /* ~2.0-2.1 MB/s */
+                               2300000 + (i % 7) * 9000,   /* ~2.3 MB/s */
                                660 + (i % 5) * 30);        /* ~0.7 KB/s     */
         activity_update(&a, &d, 4);
     }
 
     check(a.state == ACT_IDLE,
           "an idle IDE reaches idle despite 2 MB/s of internal piping");
-    check(a.cpu.relative_used, "its own CPU baseline was learned");
-    check(a.cpu.bar > CFG_CPU_MARGIN,
-          "which raised the CPU bar above a quiet app's");
-    check(a.disk.smoothed < a.disk.bar, "and its piping stayed under the bar");
+    check(!a.ch[CH_DISK].learned_used,
+          "its piping never lets up, so no baseline can be learned from it");
+    check_eq(a.ch[CH_DISK].bar, CFG_DISK_DEFAULT,
+             "and the slider value is what it is judged against");
+    check(a.ch[CH_DISK].smoothed < a.ch[CH_DISK].bar, "and its piping stayed under the bar");
+}
+
+/* An app whose noise genuinely swings gets its bar lifted, so that its own
+   loud-but-ordinary moments are not mistaken for work. The lift only ever
+   raises the bar; it can never make the app easier to call busy. */
+static void test_a_swinging_baseline_raises_the_bar(void)
+{
+    Activity a;
+    int i;
+
+    begin(&a);
+    for (i = 0; i < 120; i++) {
+        /* Between 2.3 and 6 MB/s: quiet enough sometimes to learn from. */
+        TrackerDelta d = rates(0, (i % 2) ? 6000000 : 2300000, 0);
+        activity_update(&a, &d, 0);
+    }
+
+    check(a.ch[CH_DISK].learned_used, "the disk bar was raised to suit it");
+    check(a.ch[CH_DISK].bar > CFG_DISK_DEFAULT, "above where the slider sits");
+    check(a.state != ACT_BUSY, "so its own churn does not read as work");
 }
 
 /* The other half: the same noisy IDE, now running an AI API session -- small
@@ -391,7 +412,7 @@ static void test_network_bursts_inside_a_noisy_ide_hold_the_lock(void)
             activity_update(&a, &d, 4);
         }
         check(a.state == ACT_BUSY, "a network burst is recognised as work");
-        check(a.why == WHY_NET, "and attributed to the network");
+        check(a.why == CH_NET, "and attributed to the network");
 
         /* 10 s of waiting on the model. */
         for (i = 0; i < 10; i++) {
@@ -418,7 +439,7 @@ static void test_network_needs_a_connection(void)
     run(&a, 40, 0, 0, 0, 2);
     run(&a, 10, 0, 0, 60000, 2);
     check(a.state == ACT_BUSY, "the same bytes with a connection count");
-    check(a.why == WHY_NET, "as network work");
+    check(a.why == CH_NET, "as network work");
 }
 
 /* An export pegged at one core from the first second to the last has never
@@ -437,9 +458,9 @@ static void test_a_flat_out_job_is_never_mistaken_for_idle(void)
     }
 
     check(a.state == ACT_BUSY, "a flat-out job stays busy indefinitely");
-    check(!a.cpu.relative_used,
+    check(!a.ch[CH_CPU].learned_used,
           "and its own level is refused as a baseline");
-    check_eq(a.cpu.bar, CFG_CPU_ABSOLUTE, "so the absolute bar applies");
+    check_eq(a.ch[CH_CPU].bar, CFG_CPU_DEFAULT, "so the slider value stands");
 }
 
 static void test_a_quiet_app_keeps_the_sensitive_bars(void)
@@ -453,15 +474,16 @@ static void test_a_quiet_app_keeps_the_sensitive_bars(void)
         activity_update(&a, &d, 1);
     }
 
-    check(a.cpu.relative_used, "a quiet app learns a floor of zero");
-    check_eq(a.cpu.bar, CFG_CPU_MARGIN, "leaving the CPU bar at the margin");
-    check_eq(a.disk.bar, CFG_DISK_MARGIN, "and the disk bar at the margin");
-    check_eq(a.net.bar, CFG_NET_MARGIN, "and the network bar at the margin");
+    check(!a.ch[CH_CPU].learned_used,
+          "a quiet app gives its baseline no reason to raise anything");
+    check_eq(a.ch[CH_CPU].bar,  CFG_CPU_DEFAULT,  "the CPU bar is the slider");
+    check_eq(a.ch[CH_DISK].bar, CFG_DISK_DEFAULT, "and so is the disk bar");
+    check_eq(a.ch[CH_NET].bar,  CFG_NET_DEFAULT,  "and the network bar");
 
     /* Which means modest work on a quiet app is still caught. */
-    run(&a, 6, 400, 0, 0, 1);
+    run(&a, 6, 700, 0, 0, 1);
     check(a.state == ACT_BUSY,
-          "40% of one core is work for an app that does nothing otherwise");
+          "70% of one core is work for an app that does nothing otherwise");
 }
 
 static void test_zero_length_tick_changes_nothing(void)
@@ -481,10 +503,11 @@ static void test_zero_length_tick_changes_nothing(void)
 
 static void test_reason_names(void)
 {
-    check(activity_reason_name(WHY_CPU)[0] == 'c', "cpu names itself");
-    check(activity_reason_name(WHY_DISK)[0] == 'd', "disk names itself");
-    check(activity_reason_name(WHY_NET)[0] == 'n', "net names itself");
-    check(activity_reason_name(WHY_NOTHING)[0] == '-', "and quiet is a dash");
+    check(activity_channel_name(CH_CPU)[0] == 'c', "cpu names itself");
+    check(activity_channel_name(CH_DISK)[0] == 'd', "disk names itself");
+    check(activity_channel_name(CH_NET)[0] == 'n', "net names itself");
+    check(activity_channel_name(CH_MEM)[0] == 0x6d, "mem names itself");
+    check(activity_channel_name(-1)[0] == 0x2d, "and quiet is a dash");
 }
 
 /* ------------------------------------------------------------------- main */
@@ -509,6 +532,7 @@ int main(void)
     test_grace_window();
     test_pauses_inside_a_job_never_release();
     test_an_idle_ide_is_allowed_to_sleep();
+    test_a_swinging_baseline_raises_the_bar();
     test_network_bursts_inside_a_noisy_ide_hold_the_lock();
     test_network_needs_a_connection();
     test_a_flat_out_job_is_never_mistaken_for_idle();

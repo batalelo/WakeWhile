@@ -474,3 +474,94 @@ void ui_list_reveal(HWND list, int index)
 
     list_clamp(list, s);
 }
+
+/* -------------------------------------------------------------- slider */
+
+#define GRIP   14   /* logical diameter of the grip */
+#define RAIL    4   /* logical thickness of the track */
+
+/* The grip's centre can only reach half its own width from each end, so the
+   travel is narrower than the track. Everything else follows from that. */
+static int slider_travel(const UiSlider *s)
+{
+    int w = s->track.right - s->track.left - ui_scale(GRIP);
+    return w > 0 ? w : 1;
+}
+
+static int slider_grip_x(const UiSlider *s)
+{
+    return s->track.left + ui_scale(GRIP) / 2
+           + (int)((s->pos * (unsigned)slider_travel(s)) / 1000);
+}
+
+void ui_draw_slider(HDC dc, const Theme *t, const UiSlider *s, int enabled)
+{
+    RECT rail, filled, grip;
+    int cy = (s->track.top + s->track.bottom) / 2;
+    int gx = slider_grip_x(s);
+    int r = ui_scale(GRIP) / 2;
+    COLORREF accent = enabled ? (s->hot || s->dragging ? t->accent_hot
+                                                       : t->accent)
+                              : t->muted_text;
+
+    rail.left = s->track.left;
+    rail.right = s->track.right;
+    rail.top = cy - ui_scale(RAIL) / 2;
+    rail.bottom = rail.top + ui_scale(RAIL);
+    ui_fill_round(dc, &rail, ui_scale(RAIL) / 2,
+                  enabled ? t->border : t->muted);
+
+    filled = rail;
+    filled.right = gx;
+    if (filled.right > filled.left)
+        ui_fill_round(dc, &filled, ui_scale(RAIL) / 2, accent);
+
+    grip.left = gx - r;
+    grip.right = gx + r;
+    grip.top = cy - r;
+    grip.bottom = cy + r;
+    /* A ring rather than a disc: the panel colour in the middle keeps the
+       grip legible against the filled part of the rail. */
+    ui_fill_round(dc, &grip, r, accent);
+    grip.left += ui_scale(4);
+    grip.right -= ui_scale(4);
+    grip.top += ui_scale(4);
+    grip.bottom -= ui_scale(4);
+    ui_fill_round(dc, &grip, (grip.right - grip.left) / 2, t->bg);
+}
+
+int ui_slider_hit(const UiSlider *s, int x, int y)
+{
+    /* Generous vertically: the rail is four pixels and nobody can hit that. */
+    return x >= s->track.left - ui_scale(GRIP) / 2 &&
+           x <= s->track.right + ui_scale(GRIP) / 2 &&
+           y >= s->track.top && y < s->track.bottom;
+}
+
+static int slider_set_from_x(UiSlider *s, int x)
+{
+    int travel = slider_travel(s);
+    int rel = x - (s->track.left + ui_scale(GRIP) / 2);
+    unsigned int pos;
+
+    if (rel < 0) rel = 0;
+    if (rel > travel) rel = travel;
+    pos = (unsigned int)(((long long)rel * 1000) / travel);
+
+    if (pos == s->pos) return 0;
+    s->pos = pos;
+    return 1;
+}
+
+int ui_slider_click(UiSlider *s, int x, int y)
+{
+    if (!ui_slider_hit(s, x, y)) return 0;
+    s->dragging = 1;
+    return slider_set_from_x(s, x);
+}
+
+int ui_slider_drag(UiSlider *s, int x)
+{
+    if (!s->dragging) return 0;
+    return slider_set_from_x(s, x);
+}

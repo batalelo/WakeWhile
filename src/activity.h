@@ -15,21 +15,20 @@ typedef enum {
     ACT_IDLE  = 2   /* quiet past the grace window; the lock can be dropped */
 } ActivityState;
 
-/* Which signal decided it. Reported so the log can answer "why is my machine
-   still awake" without anyone having to guess. */
+/* The four things watched, in the order they are shown and logged. */
 typedef enum {
-    WHY_NOTHING = 0,
-    WHY_CPU     = 1,
-    WHY_DISK    = 2,
-    WHY_NET     = 3,
-    WHY_FIRST   = 4   /* the tick right after the button was pressed */
-} BusyReason;
+    CH_CPU  = 0,
+    CH_DISK = 1,
+    CH_NET  = 2,
+    CH_MEM  = 3,
+    CH_COUNT = 4
+} ChannelId;
 
-/* The two bars a channel can be judged against. */
 typedef struct {
-    unsigned int absolute;
-    unsigned int multiple;
-    unsigned int margin;
+    unsigned int threshold;  /* where the user's slider is                  */
+    unsigned int lo, hi;     /* the ends of that slider                     */
+    unsigned int multiple;   /* how far above its own quiet level counts    */
+    int enabled;
 } ChannelRule;
 
 typedef struct {
@@ -45,37 +44,32 @@ typedef struct {
     unsigned int low;        /* quietest in the long window   */
     unsigned int high;       /* busiest in the long window    */
     unsigned int bar;        /* what `smoothed` had to beat   */
-    int relative_used;       /* whether the learned bar applied */
+    int learned_used;        /* the app's own level raised the bar */
     int busy;
 } Channel;
 
 typedef struct {
-    ChannelRule cpu;
-    ChannelRule disk;
-    ChannelRule net;
+    ChannelRule ch[CH_COUNT];
     unsigned int grace_ms;
-    int net_enabled;
 } ActivityConfig;
 
 typedef struct {
     ActivityConfig cfg;
     ActivityState  state;
-    BusyReason     why;
+    int            why;      /* a ChannelId, or -1 for nothing */
     u64  quiet_ms;
 
-    Channel cpu;    /* permille of one core */
-    Channel disk;   /* bytes per second     */
-    Channel net;    /* bytes per second     */
-
-    int conns;      /* established connections off this machine */
-    int started;
+    Channel ch[CH_COUNT];
+    u64  ws_bytes;           /* memory in use across the tree, for display */
+    int  conns;              /* established connections off this machine   */
+    int  started;
 } Activity;
 
 void activity_defaults(ActivityConfig *cfg);
 void activity_init(Activity *a, const ActivityConfig *cfg);
 
 /* Folds one tick into the state machine. `conns` is the number of
-   established connections to somewhere off this machine; the network signal
+   established connections to somewhere off this machine; the network channel
    is ignored when it is zero, so an app's local chatter is never mistaken
    for traffic. The very first call reports BUSY so that pressing the button
    engages the lock immediately, and a call covering no elapsed time leaves
@@ -83,6 +77,13 @@ void activity_init(Activity *a, const ActivityConfig *cfg);
 ActivityState activity_update(Activity *a, const TrackerDelta *d, int conns);
 
 int activity_should_hold(ActivityState s);
-const char *activity_reason_name(BusyReason r);
+
+/* "cpu", "disk", "net", "mem", or "-". */
+const char *activity_channel_name(int channel_or_minus_one);
+
+/* Where `value` sits between the ends of a slider, 0..1000, on a log scale
+   so the low end stays usable. And back again. */
+unsigned int activity_to_slider(const ChannelRule *r, unsigned int value);
+unsigned int activity_from_slider(const ChannelRule *r, unsigned int pos);
 
 #endif

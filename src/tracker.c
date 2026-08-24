@@ -30,6 +30,8 @@ TrackerDelta tracker_update(Tracker *t, const ProcSample *snap, int n,
     d.d_cpu_100ns = 0;
     d.d_rw_bytes = 0;
     d.d_other_bytes = 0;
+    d.d_faults = 0;
+    d.ws_bytes = 0;
     d.d_wall_100ns = 0;
     d.n_procs = n;
 
@@ -54,12 +56,19 @@ TrackerDelta tracker_update(Tracker *t, const ProcSample *snap, int n,
                 d.d_rw_bytes += cur->rw_bytes - old->rw_bytes;
             if (cur->other_bytes > old->other_bytes)
                 d.d_other_bytes += cur->other_bytes - old->other_bytes;
+            if (cur->faults > old->faults)
+                d.d_faults += cur->faults - old->faults;
         } else if (cur->create_100ns > t->last_100ns) {
             /* Born during this tick, so everything it has spent is new. */
             d.d_cpu_100ns += cur->cpu_100ns;
             d.d_rw_bytes += cur->rw_bytes;
             d.d_other_bytes += cur->other_bytes;
+            d.d_faults += cur->faults;
         }
+
+        /* Memory in use is a level, not something that accumulates, so it is
+           summed fresh every tick for every process we can see. */
+        d.ws_bytes += cur->ws_bytes;
         /* Otherwise it predates the last sample but we are only seeing it now
            -- the tree grew sideways, or a handle finally opened. Counting its
            whole lifetime here would read as a huge spike, so we adopt it

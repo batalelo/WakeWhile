@@ -73,4 +73,30 @@ void ui_list_set_count(HWND list, int count);
 void ui_list_set_enabled(HWND list, int enabled);
 void ui_list_reveal(HWND list, int index);
 
+
+/* --------------------------------------------------------------- slider */
+
+/* A horizontal track with a round grip, drawn like everything else here.
+   The parent gets WM_COMMAND with UISN_CHANGED while it is dragged.
+
+   Sliders are not separate windows: there are four of them and they live in
+   the main window's paint and hit-test, which is less code than four child
+   windows and keeps the whole panel on one back buffer. */
+
+#define UISN_CHANGED 3
+
+typedef struct {
+    RECT track;        /* set by the layout each paint  */
+    unsigned int pos;  /* 0..1000                       */
+    int hot;
+    int dragging;
+} UiSlider;
+
+void ui_draw_slider(HDC dc, const Theme *t, const UiSlider *s, int enabled);
+
+/* Returns 1 if the position changed. `x` is in the same space as the track. */
+int ui_slider_click(UiSlider *s, int x, int y);
+int ui_slider_drag(UiSlider *s, int x);
+int ui_slider_hit(const UiSlider *s, int x, int y);
+
 #endif

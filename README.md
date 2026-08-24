@@ -1,6 +1,6 @@
 # nosleep
 
-A 49 KB Windows program that keeps the machine awake while a chosen app is
+A 60 KB Windows program that keeps the machine awake while a chosen app is
 actually working — and lets it sleep again when the app goes quiet.
 
 Open it, pick the app you are waiting on, press **DON'T SLEEP**. It drops to
@@ -9,8 +9,9 @@ the tray and watches. When the work finishes, it lets go on its own.
 No installer, no dependencies, no background service. One file.
 
 ```
-nosleep.exe          49 KB, needs nothing but Windows itself
-nosleep.log          written beside it, so you can see why it decided what it did
+nosleep.exe          60 KB, needs nothing but Windows itself
+nosleep.log          one line a second, so you can see why it decided what it did
+nosleep.ini          where you left the sliders
 ```
 
 ## Why not just prevent sleep?
@@ -25,13 +26,18 @@ an IDE build, a long upload, an AI agent working through a task.
 
 ## When does it think an app is "working"?
 
-Three signals, judged separately, because they behave nothing alike.
+Four signals, judged separately, because they behave nothing alike.
 
 | signal | what it is | what it catches |
 |---|---|---|
-| **cpu** | kernel + user time, as a percentage of **one core** | renders, builds, encodes |
-| **disk** | `ReadFile` + `WriteFile` | copies, exports, big downloads landing on disk |
-| **net** | socket traffic, and only while a connection to another machine is open | AI API sessions, uploads, streaming |
+| **CPU** | kernel + user time, as a percentage of **one core** | renders, builds, encodes |
+| **Disk** | `ReadFile` + `WriteFile` | copies, exports, big downloads landing on disk |
+| **Net** | socket traffic, and only while a connection to another machine is open | AI API sessions, uploads, streaming |
+| **RAM** | page faults per second, with the working set shown beside it | anything churning memory |
+
+Each has a slider in the window, with the live reading printed underneath it,
+so the line the app has to cross is never abstract. The defaults are set from
+measurement (below); move them and they are remembered in `nosleep.ini`.
 
 All three are summed over **the whole process tree** — the app you picked and
 everything it has spawned. Chrome, VS Code, Cursor, Antigravity and every
@@ -55,18 +61,20 @@ which Windows counts as ordinary read/write. Against fixed thresholds that reads
 as permanent work, and the machine never sleeps. Notepad, by contrast, sits at
 flat zero on all three.
 
-So each signal is judged against **the lower of two bars**:
+So the bar a signal has to beat is:
 
-- an **absolute** bar — work that is unmistakable whoever is doing it
-- a **relative** bar — a departure from what *this app* has been doing over
-  the last three minutes
+    bar = the higher of ( where you put the slider ,
+                          what this app has been doing lately x a multiple )
 
 An IDE learns its own noisy baseline and the bars rise to suit it. A quiet app
-keeps the sensitive bars. Nothing is hard-coded to any particular editor, so
+keeps the slider value. Nothing is hard-coded to any particular editor, so
 Cursor, Antigravity, a JetBrains IDE or anything else calibrates itself the
-same way.
+same way. And because the learned part can only ever *raise* the bar, nothing
+the program works out on its own can make it more trigger-happy than you asked
+for. When that happens the row says `auto-raised`, so the number on screen is
+never a lie.
 
-The relative bar is **refused** when the app has been flat for the whole
+The learned part is **ignored** when the app has been flat for the whole
 window. An export pegged at one core from start to finish has never shown a
 quiet moment, and letting it treat its own busy level as a baseline is how a
 render would talk itself into looking idle halfway through.
@@ -87,6 +95,29 @@ That counter is gated on there being an established connection to another
 machine, so an app talking only to itself is never mistaken for one talking to
 a server.
 
+The default is **2 KB/s**, and it is low for a reason. Measured over 240
+seconds of a real AI session running inside VS Code, against the same editor
+sitting idle:
+
+| network, smoothed | idle VS Code | real AI session |
+|---|---|---|
+| median | 2.8 KB/s | 1.0 KB/s |
+| max | 5.5 KB/s | 11.1 KB/s |
+
+The two overlap almost completely — between turns an AI session is *silent*,
+so its median is lower than the editor's own background chatter. What
+separates them is how long the gaps are, and only a low threshold keeps those
+gaps under a minute:
+
+| threshold | longest gap, AI session | longest gap, idle |
+|---|---|---|
+| **2 KB/s** | **37 s** — holds | **234 s** — sleeps |
+| 4 KB/s | 73 s — **sleeps mid-task** | sleeps |
+| 16 KB/s | 172 s — **sleeps mid-task** | sleeps |
+
+That leaves 23 seconds of margin. If your work pauses for longer than that,
+drag the Net slider left.
+
 ### Waiting before letting go
 
 The lock is held until **60 consecutive seconds** of quiet, plus the few
@@ -100,17 +131,17 @@ watching. It is there so that "it never lets my machine sleep" has an answer
 you can read:
 
 ```
-2026-08-24 00:44:44  watching: my-project - Visual Studio Code
-2026-08-24 00:44:44    pid 7784, plus every process it spawns
-2026-08-24 00:44:44    bars: cpu 800 permille | disk 8388608 B/s | net 2048 B/s
-2026-08-24 00:44:46  tick procs=26 cpu=203/800 disk=2442811/8388608 net=138/2048 conn=3 -> grace (-) quiet=0s lock=held
-2026-08-24 00:45:52  tick procs=26 cpu=188/531r disk=2049012/8388608 net=679/1704r conn=3 -> IDLE (-) quiet=61s lock=off
+2026-08-24 03:08:06  watching: my-project - Visual Studio Code
+2026-08-24 03:08:06    pid 7784, plus every process it spawns
+2026-08-24 03:08:06    thresholds: cpu 500 permille | disk 4194304 B/s | net 2048 B/s | mem 20000 faults/s
+2026-08-24 03:08:08  tick procs=26 cpu=219/500 disk=2316366/4194304 net=122/2048 mem=656/20000 ws=3253MB conn=3 -> grace (-) quiet=0s lock=held
+2026-08-24 03:09:12  tick procs=26 cpu=188/500 disk=2049012/4194304 net=679/2048 mem=812/20000 ws=3251MB conn=3 -> IDLE (-) quiet=61s lock=off
 ```
 
 Each pair is `measured/bar`. A trailing **`r`** means the app's own baseline
-lowered that bar. The word in brackets is which signal decided it — `cpu`,
-`disk`, `net`, or `-` for none. `lock=held` / `lock=off` is the sleep lock
-itself.
+raised that bar above the slider. `ws` is the working set across the whole
+tree. The word in brackets is which signal decided it — `cpu`, `disk`, `net`,
+`mem`, or `-` for none. `lock=held` / `lock=off` is the sleep lock itself.
 
 If the machine is staying awake and you want to know why, find the last line
 with something other than `-` in brackets.
@@ -180,7 +211,8 @@ actually does when you think it is idle.
 | `src/ui.c` | drawing primitives and the list control |
 | `src/theme.c`, `src/tray.c` | palette, tray icon drawn at run time |
 | `src/app.c` | the window and the once-a-second tick |
-| `tests/test_activity.c` | 81 headless checks over the two pure modules |
+| `src/settings.c` | the `.ini` beside the executable |
+| `tests/test_activity.c` | 85 headless checks over the two pure modules |
 
 The design, and the measurements behind every constant, are in
 [docs/superpowers/specs/2026-08-23-nosleep-gui-design.md](docs/superpowers/specs/2026-08-23-nosleep-gui-design.md).

@@ -27,12 +27,16 @@ typedef struct {
     u64 cpu_100ns;     /* kernel + user, cumulative since the process started */
     u64 rw_bytes;      /* read + write, cumulative                            */
     u64 other_bytes;   /* everything else, cumulative                         */
+    u64 faults;        /* page faults, cumulative -- memory churn              */
+    u64 ws_bytes;      /* working set right now: a level, not a rate           */
 } ProcSample;
 
 typedef struct {
     u64 d_cpu_100ns;
     u64 d_rw_bytes;
     u64 d_other_bytes;
+    u64 d_faults;
+    u64 ws_bytes;      /* summed across the tree, not a delta */
     u64 d_wall_100ns;
     int n_procs;       /* processes in the tree at this instant */
 } TrackerDelta;

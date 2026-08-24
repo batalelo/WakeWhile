@@ -1,0 +1,4 @@
+LIBRARY psapi.dll
+
+EXPORTS
+GetProcessMemoryInfo
