@@ -18,6 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Savannah is not always up, so the compiler is cached on the runner
+      # and only fetched when the cache misses.
+      - name: Cache TinyCC
+        uses: actions/cache@v4
+        with:
+          path: tools/tcc
+          key: tcc-0.9.27-win64
+
       - name: Fetch TinyCC
         shell: pwsh
         run: ./tools/get-tcc.ps1
