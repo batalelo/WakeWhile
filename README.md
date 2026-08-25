@@ -430,6 +430,38 @@ using `BeginUpdateResource`.
 
 ---
 
+## Privacy
+
+WakeWhile collects nothing, sends nothing, and has no telemetry, analytics,
+advertising or crash reporting. It has no network code of its own: it never
+opens a socket, and the only thing it knows about the network is *how many*
+connections other processes already have open, which it counts locally and
+shows you on screen.
+
+Everything it reads stays on the machine. To do its job it looks at the
+windows you have open, and at the CPU, disk, memory and connection counts of
+the one app you explicitly picked — nothing else, and nothing about any other user
+on the machine.
+
+It writes two files and nothing else:
+
+| File | What is in it |
+|---|---|
+| `WakeWhile.log` | one line a second recording the readings and the decision |
+| `WakeWhile.ini` | where you left the sliders |
+
+Both sit beside the executable, or in `%LOCALAPPDATA%\WakeWhile` when it is
+installed from the Microsoft Store, because a packaged app cannot write to its
+own folder. Delete them whenever you like. No registry keys, no startup
+entries, no background service.
+
+There is no account, no sign-in and no identifier of any kind. Nothing about
+you leaves your computer, because there is no code in it that could send
+anything anywhere. The source is here if you would rather check than take our
+word for it.
+
+---
+
 ## Author
 
 Built by **Abdallah Elbatal** — [TakeYourSite.com](https://www.TakeYourSite.com)
