@@ -83,6 +83,13 @@ winget install WakeWhile
 > [microsoft/winget-pkgs#423169](https://github.com/microsoft/winget-pkgs/pull/423169).
 > Use the download above until it merges.
 
+### Or from the Microsoft Store
+
+Not listed yet. The packaging that gets it there lives in
+[batalelo/WakeWhile-MSIX](https://github.com/batalelo/WakeWhile-MSIX) — the
+same program built as MSIX, which the Store signs rather than shipping
+unsigned.
+
 ### Uninstalling
 
 Delete the file. It writes two small files beside itself — `WakeWhile.log` and
