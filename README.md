@@ -18,8 +18,11 @@ lock by itself once the work finishes. No toggle to forget about.
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![platform](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
 
-<img src="docs/images/wakewhile-keep-windows-awake.png" width="427"
-     alt="WakeWhile on Windows 11, showing the picker listing open applications and the CPU, disk, network, memory and wait sliders that decide when to keep the PC awake">
+<img src="docs/images/wakewhile-demo.gif" width="400"
+     alt="WakeWhile holding Windows awake while a job runs at 100% of a core, then counting down the quiet period and releasing the lock by itself once the job finishes">
+
+*A real job, sped up five times. It takes the lock while the work runs,
+counts the silence when it stops, and lets go on its own.*
 
 </div>
 
@@ -121,6 +124,11 @@ busy core reads 6% there on a 16-thread box and 25% on a 4-thread one.
 Any one signal crossing its limit counts as working. Each limit is a slider,
 with the app's live reading printed directly underneath it — and the readings
 start the moment you select an app, before you commit to anything.
+
+<div align="center">
+<img src="docs/images/wakewhile-keep-windows-awake.png" width="427"
+     alt="WakeWhile on Windows 11: the picker listing open applications, and the CPU, disk, network, memory and wait sliders that decide when to keep the PC awake, each with its live reading underneath">
+</div>
 
 ## What people use it for
 

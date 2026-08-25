@@ -17,3 +17,7 @@ build/*.txt
 
 # Local notes, not part of the project.
 PUBLISH-STEPS.md
+
+# Demo recording: the tool is committed, its inputs are not.
+build/ffmpeg/
+build/frames/

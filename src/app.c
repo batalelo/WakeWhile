@@ -557,7 +557,11 @@ static void paint_channels(HDC dc)
         ui_text(dc, &value, span, f->body, g_theme.text,
                 DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_NOPREFIX);
 
-        if (g_mode == MODE_WATCH && g_state != ACT_BUSY) {
+        if (g_mode == MODE_WATCH && g_state == ACT_IDLE) {
+            /* Counting on past the wait would read as "55s of 30s", which is
+               nonsense. Once the lock is gone the number has done its job. */
+            wcopy(text, L"let go \x00b7 will take the lock again when it is busy", 80);
+        } else if (g_mode == MODE_WATCH && g_state == ACT_GRACE) {
             WCHAR sofar[24];
             fmt_wait(sofar, (unsigned int)g_activity.quiet_ms);
             wsprintfW(text, L"quiet for %s of %s", sofar, span);
