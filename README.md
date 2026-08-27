@@ -12,8 +12,13 @@ lock by itself once the work finishes. No toggle to forget about.
 
 **90 KB · one file · no installer · no dependencies · no admin rights**
 
-[**Download**](../../releases/latest) · [Install](#install) · [What people use it for](#what-people-use-it-for) · [How it decides](#how-it-decides-whether-an-app-is-working) · [FAQ](#faq) · [Build from source](#building-from-source)
+<a href="https://apps.microsoft.com/detail/9NN6H0GFB63L">
+<img src="https://get.microsoft.com/images/en-us%20dark.svg" width="220"
+     alt="Get WakeWhile from the Microsoft Store"></a>
 
+[**Get it on the Microsoft Store**](https://apps.microsoft.com/detail/9NN6H0GFB63L) · [Download the .exe](../../releases/latest) · [What people use it for](#what-people-use-it-for) · [How it decides](#how-it-decides-whether-an-app-is-working) · [FAQ](#faq) · [Build from source](#building-from-source)
+
+[![Microsoft Store](https://img.shields.io/badge/Microsoft%20Store-WakeWhile-0078D6?logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyMyAyMyIgZmlsbD0iI2ZmZiI+PHBhdGggZD0iTTAgMGgxMXYxMUgweiIvPjxwYXRoIGQ9Ik0xMiAwaDExdjExSDEyeiIvPjxwYXRoIGQ9Ik0wIDEyaDExdjExSDB6Ii8+PHBhdGggZD0iTTEyIDEyaDExdjExSDEyeiIvPjwvc3ZnPg==)](https://apps.microsoft.com/detail/9NN6H0GFB63L)
 [![build](https://github.com/batalelo/WakeWhile/actions/workflows/build.yml/badge.svg)](https://github.com/batalelo/WakeWhile/actions/workflows/build.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![platform](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
@@ -63,10 +68,32 @@ runtime, no service, no administrator rights.
 
 ## Install
 
-### Download it
+### From the Microsoft Store
 
-There is no installer. Just download `WakeWhile.exe` from
-[Releases](../../releases/latest) and run it. Put it anywhere you like.
+<a href="https://apps.microsoft.com/detail/9NN6H0GFB63L">
+<img src="https://get.microsoft.com/images/en-us%20dark.svg" width="220"
+     alt="Get WakeWhile from the Microsoft Store"></a>
+
+**[apps.microsoft.com/detail/9NN6H0GFB63L](https://apps.microsoft.com/detail/9NN6H0GFB63L)**
+
+Free, and the easiest way in. Microsoft reviews and signs what it publishes, so
+there is no security warning to click past and updates arrive on their own.
+
+The same package from a terminal:
+
+```
+winget install WakeWhile
+```
+
+### Or take the single file
+
+If you would rather install nothing at all, download `WakeWhile.exe` from
+[Releases](../../releases/latest) and run it. One 90 KB file — put it anywhere,
+a USB stick included.
+
+Windows will warn you the first time, because a file downloaded from the
+internet is unsigned until someone pays to sign it: **More info → Run anyway.**
+The Store build above exists precisely to skip that step.
 
 Every release is built by GitHub Actions from the tagged commit and publishes
 its SHA-256, so the binary you download can be checked against the source that
@@ -76,29 +103,33 @@ produced it:
 certutil -hashfile WakeWhile.exe SHA256
 ```
 
-### Or with winget
+<details>
+<summary>Which one should I take?</summary>
 
-```
-winget install WakeWhile
-```
+<br>
 
-> Not live yet — the manifest is in review at
-> [microsoft/winget-pkgs#423169](https://github.com/microsoft/winget-pkgs/pull/423169).
-> Use the download above until it merges.
+|  | Microsoft Store | Single file |
+|---|---|---|
+| Security warning | none | once, on first run |
+| Updates | automatic | you re-download |
+| Leaves anything behind | a normal installed app | nothing — delete the file |
+| Runs from a USB stick | no | yes |
+| Needs the Store app | yes | no |
 
-### Or from the Microsoft Store
+Both are the same program, built from the same source in this repository. The
+Store build is packaged as MSIX in
+[batalelo/WakeWhile-MSIX](https://github.com/batalelo/WakeWhile-MSIX).
 
-Not listed yet. The packaging that gets it there lives in
-[batalelo/WakeWhile-MSIX](https://github.com/batalelo/WakeWhile-MSIX) — the
-same program built as MSIX, which the Store signs rather than shipping
-unsigned.
+</details>
 
 ### Uninstalling
 
-Delete the file. It writes two small files beside itself — `WakeWhile.log` and
-`WakeWhile.ini` — and touches nothing else. No registry keys, no `%APPDATA%`,
-no startup entries. If you installed it with winget, `winget uninstall
-WakeWhile` does the same.
+**Store build** — right-click WakeWhile in the Start menu and choose Uninstall,
+or run `winget uninstall WakeWhile`.
+
+**Single file** — delete it. It writes two small files beside itself,
+`WakeWhile.log` and `WakeWhile.ini`, and touches nothing else. No registry
+keys, no `%APPDATA%`, no startup entries.
 
 ---
 
