@@ -23,7 +23,7 @@ lock by itself once the work finishes. No toggle to forget about.
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![platform](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6)
 
-<img src="docs/images/wakewhile-demo.gif" width="400"
+<img src="docs/images/wakewhile-demo.gif" width="429"
      alt="WakeWhile holding Windows awake while a job runs at 100% of a core, then counting down the quiet period and releasing the lock by itself once the job finishes">
 
 *A real job, sped up five times. It takes the lock while the work runs,

@@ -29,6 +29,7 @@ public delegate bool EnumProc(System.IntPtr h, System.IntPtr l);
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr h, out uint pid);
 [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern System.IntPtr FindWindowExW(System.IntPtr p, System.IntPtr a, string c, string t);
 [DllImport("user32.dll")] public static extern bool GetWindowRect(System.IntPtr h, out RECT r);
+[DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(System.IntPtr h, int attr, out RECT r, int size);
 [DllImport("user32.dll")] public static extern bool GetClientRect(System.IntPtr h, out RECT r);
 [DllImport("user32.dll")] public static extern bool PostMessageW(System.IntPtr h, uint m, System.IntPtr w, System.IntPtr l);
 [DllImport("user32.dll")] public static extern bool SetWindowPos(System.IntPtr h, System.IntPtr a, int x, int y, int cx, int cy, uint f);
@@ -164,8 +165,16 @@ display=0
 
     Write-Host "  [3/5] recording" -ForegroundColor Cyan
 
+    # GetWindowRect hands back the *layout* rectangle, which since Windows 10
+    # includes an invisible resize border — eight pixels of whatever happens to
+    # be sitting behind the window. Capturing that means capturing the desktop,
+    # or worse, a stripe of some other window. DWMWA_EXTENDED_FRAME_BOUNDS (9)
+    # is the rectangle actually painted on screen.
     $r = New-Object Demo.Rec+RECT
-    [void][Demo.Rec]::GetWindowRect($win, [ref]$r)
+    if ([Demo.Rec]::DwmGetWindowAttribute($win, 9, [ref]$r, 16) -ne 0) {
+        [void][Demo.Rec]::GetWindowRect($win, [ref]$r)
+        Write-Host "        DWM bounds unavailable, falling back" -ForegroundColor Yellow
+    }
     $w = $r.R - $r.L
     $h = $r.B - $r.T
     $bmp = New-Object Drawing.Bitmap($w, $h)
@@ -198,12 +207,15 @@ $ff = "$PWD\build\ffmpeg\ffmpeg.exe"
 New-Item -ItemType Directory -Force docs\images | Out-Null
 $outFps = $FPS * $SPEED
 
-# One palette for the whole clip: a flat interface stays clean at 256 colours
-# and the file stays small enough to load inside a README.
+# One palette for the whole clip, and no dithering. The interface is flat dark
+# panels and text, so 256 colours cover it outright; a dither pattern would add
+# noise that is both visible against the flat areas and impossible to compress
+# between frames. Encoding at native size rather than scaling down keeps the
+# text crisp — the README asks the browser for the width it wants.
 & $ff -y -loglevel error -framerate $outFps -i "$frames\f%04d.png" `
-      -vf "scale=400:-1:flags=lanczos,palettegen=stats_mode=diff" "$frames\pal.png"
+      -vf "palettegen=max_colors=256:stats_mode=diff" "$frames\pal.png"
 & $ff -y -loglevel error -framerate $outFps -i "$frames\f%04d.png" -i "$frames\pal.png" `
-      -lavfi "scale=400:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3" `
+      -lavfi "paletteuse=dither=none:diff_mode=rectangle" -loop 0 `
       docs\images\wakewhile-demo.gif
 
 & $ff -y -loglevel error -framerate $outFps -i "$frames\f%04d.png" `
